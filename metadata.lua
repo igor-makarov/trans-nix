@@ -1,6 +1,6 @@
 PLUGIN = { -- luacheck: ignore
     name = "trans-nix",
-    version = "1.0.0",
+    version = "1.0.1",
     description = "Install relocatable nixpkgs closures through mise without Nix",
     author = "Igor Makarov",
     homepage = "https://github.com/igor-makarov/trans-nix",
