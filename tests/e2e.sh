@@ -59,7 +59,7 @@ version_latest=$(mise latest 'trans-nix:nodejs')
 printf 'resolved nodejs@24.14 -> %s\n' "$version_24_14"
 printf 'resolved nodejs@latest -> %s\n' "$version_latest"
 
-verify_install() {
+verify_node() {
     local selector=$1
     local version=$2
     local install_path expected output
@@ -90,8 +90,49 @@ EOF
     "$install_path/bin/node" -e 'console.log(process.platform, process.arch)'
 }
 
-verify_install 24.14 "$version_24_14"
-verify_install latest "$version_latest"
+verify_pango() {
+    local version=1.57.1
+    local install_path expected library
+
+    cat >"$MISE_CONFIG_DIR/config.toml" <<EOF
+[settings]
+experimental = true
+
+[tools]
+python = "3.14"
+"trans-nix:pango" = "$version"
+EOF
+    mise install "trans-nix:pango@$version"
+    install_path=$(mise where "trans-nix:pango@$version")
+    expected="$HOME/.tn/pango/$version"
+
+    [[ -L $install_path ]]
+    [[ $(readlink "$install_path") == "$expected" ]]
+    [[ -f $expected/.nix-closure-manifest.json ]]
+    [[ -d $expected/.tn ]]
+    grep -q '"format": 3' "$expected/.nix-closure-manifest.json"
+    grep -q "\"platform\": \"$platform\"" "$expected/.nix-closure-manifest.json"
+    grep -Eq '"exactRewrites": [1-9][0-9]*' "$expected/.nix-closure-manifest.json"
+
+    library=$(find "$install_path/lib" -maxdepth 1 -name 'libpango-1.0*' -print -quit)
+    [[ -n $library ]]
+    [[ -e $library ]]
+    python3 - "$library" "$version" <<'PY'
+import ctypes
+import sys
+
+pango = ctypes.CDLL(sys.argv[1])
+pango.pango_version_string.restype = ctypes.c_char_p
+actual = pango.pango_version_string().decode()
+if actual != sys.argv[2]:
+    raise SystemExit(f"expected Pango {sys.argv[2]}, got {actual}")
+print(f"loaded Pango {actual}")
+PY
+}
+
+verify_node 24.14 "$version_24_14"
+verify_node latest "$version_latest"
+verify_pango
 
 python_path=$(mise where python@3.14)
 "$python_path/bin/python3" --version
