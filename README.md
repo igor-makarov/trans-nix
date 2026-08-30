@@ -4,11 +4,11 @@
 
 It resolves packages through [NixHub](https://www.jetify.com/docs/nixhub/), downloads them from `cache.nixos.org` and rewrites their store paths as it extracts them into `$HOME/.tn`.
 
-It does **not**:
+**It does not** install or execute `nix`.
 
-- install or execute `nix`
-- evaluate derivations, flakes, or nixpkgs
-- require access to `/nix/store`
+**It does not** evaluate derivations, flakes, or nixpkgs.
+
+**It does not** require access to `/nix/store`.
 
 ## Supported platforms
 
