@@ -20,7 +20,8 @@ It resolves packages through [NixHub](https://www.jetify.com/docs/nixhub/), down
 
 ```toml
 [tools]
-python = "latest" # the plugin requires Python 3.14+
+# the plugin requires Python 3.14+
+python = "latest"
 
 [plugins]
 trans-nix = "https://github.com/igor-makarov/trans-nix#1.1.0"
@@ -33,19 +34,18 @@ trans-nix = "https://github.com/igor-makarov/trans-nix#1.1.0"
 trans-nix = "https://github.com/igor-makarov/trans-nix"
 
 [tool_alias]
-weasyprint = "trans-nix:weasyprint[package='python314Packages.weasyprint']" # long package name
+# long package name tool alias
+weasyprint = "trans-nix:weasyprint[package='python314Packages.weasyprint']"
 
 [tools]
 python = "latest"
+# simple version
 "trans-nix:nodejs" = "24"
-"trans-nix:pango" = { version = "1.57.1", output = "out" } # specific derivation output
+# specific derivation output
+"trans-nix:pango" = { version = "1.57.1", output = "out" }
+# use tool alias above
 weasyprint = "latest"
-```
-
-The same package override can be used without a tool alias:
-
-```toml
-[tools]
+# long package name without a tool alias
 "trans-nix:weasyprint[package='python314Packages.weasyprint']" = "latest"
 ```
 
