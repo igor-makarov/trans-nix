@@ -346,16 +346,54 @@ class HashingReader:
         return bytes(chunks)
 
 
-def rewrite_store_paths(data: bytes, exact: dict[bytes, bytes]) -> tuple[bytes, int]:
+def relocation_destinations_by_digest(
+    exact: dict[bytes, bytes],
+) -> dict[bytes, bytes]:
+    """Index canonical relocated destinations by their Nix store hash."""
+    by_digest: dict[bytes, bytes] = {}
+    for old, new in exact.items():
+        match = STORE_PATH_BYTES_RE.fullmatch(old)
+        if match is None:
+            raise DownloadError(f"invalid canonical store reference: {old!r}")
+        digest = match.group(1)
+        destination = new.rstrip(b"/")
+        previous = by_digest.setdefault(digest, destination)
+        if previous != destination:
+            raise DownloadError(f"store hash has multiple destinations: {digest!r}")
+    return by_digest
+
+
+def rewrite_store_paths(
+    data: bytes,
+    exact: dict[bytes, bytes],
+    by_digest: dict[bytes, bytes] | None = None,
+) -> tuple[bytes, int]:
     matches = list(STORE_PATH_BYTES_RE.finditer(data))
     if not matches:
         return data, 0
+    if by_digest is None:
+        by_digest = relocation_destinations_by_digest(exact)
+
     rewritten = bytearray(data)
     for match in matches:
         old = match.group(0)
         new = exact.get(old)
         if new is None:
-            raise DownloadError(f"store reference is outside the closure: {old!r}")
+            # Nix discovers references by their 32-byte store hash. A binary can
+            # therefore contain a noncanonical name for a closure member (for
+            # example, compiler metadata containing "hash-glib-glib-version")
+            # even though only "hash-glib-version" exists in the store. Resolve
+            # such references to the canonical relocated directory and preserve
+            # their byte length with redundant path separators.
+            destination = by_digest.get(match.group(1))
+            if destination is None:
+                raise DownloadError(f"store reference is outside the closure: {old!r}")
+            if len(destination) > len(old):
+                raise DownloadError(
+                    f"canonical relocated path is too long for store reference: "
+                    f"{old!r} ({len(old)}) -> {destination!r} ({len(destination)})"
+                )
+            new = destination + b"/" * (len(old) - len(destination))
         if len(old) != len(new):
             raise DownloadError(
                 f"rewrite would change path length: {old!r} ({len(old)}) -> "
@@ -378,6 +416,7 @@ class NarExtractor:
     def __init__(self, source: BinaryIO, hash_spec: str, exact: dict[bytes, bytes]):
         self.reader = HashingReader(source, hash_spec)
         self.exact = exact
+        self.by_digest = relocation_destinations_by_digest(exact)
         self.rewrite_overlap = max(4096, *(len(path) for path in exact))
         self.stats = {
             "exactRewrites": 0,
@@ -422,11 +461,13 @@ class NarExtractor:
             pending += chunk
             if remaining and len(pending) > self.rewrite_overlap:
                 limit = safe_rewrite_limit(pending, self.rewrite_overlap)
-                rewritten, count = rewrite_store_paths(pending[:limit], self.exact)
+                rewritten, count = rewrite_store_paths(
+                    pending[:limit], self.exact, self.by_digest
+                )
                 output.write(rewritten)
                 rewrite_count += count
                 pending = pending[limit:]
-        rewritten, count = rewrite_store_paths(pending, self.exact)
+        rewritten, count = rewrite_store_paths(pending, self.exact, self.by_digest)
         output.write(rewritten)
         rewrite_count += count
 
@@ -494,7 +535,9 @@ class NarExtractor:
         if kind == b"symlink":
             self.expect(b"target")
             target = self.read_blob(limit=1024 * 1024)
-            rewritten, rewrites = rewrite_store_paths(target, self.exact)
+            rewritten, rewrites = rewrite_store_paths(
+                target, self.exact, self.by_digest
+            )
             os.symlink(os.fsdecode(rewritten), destination)
             self.expect(b")")
             if rewrites:

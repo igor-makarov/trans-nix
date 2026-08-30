@@ -107,6 +107,34 @@ class RelocationTests(unittest.TestCase):
         self.assertEqual(len(rewritten), 20)
         self.assertEqual(rewritten.rstrip(b"/"), b"/short/root")
 
+    def test_noncanonical_name_uses_hash_and_canonical_destination(self):
+        digest = b"1" * 32
+        canonical = b"/nix/store/" + digest + b"-glib-2.88.3"
+        destination = b"/tmp/r/.tn/" + b"0" * 32 + b"-glib-2.88.3"
+        alternate = b"/nix/store/" + digest + b"-glib-glib-2.88.3"
+        suffix = b"/libg_base64_decode_inplace"
+        self.assertEqual(len(canonical), len(destination))
+
+        rewritten, count = trans_nix.rewrite_store_paths(
+            alternate + suffix, {canonical: destination}
+        )
+
+        self.assertEqual(count, 1)
+        self.assertEqual(len(rewritten), len(alternate + suffix))
+        self.assertEqual(rewritten.removesuffix(suffix).rstrip(b"/"), destination)
+        self.assertTrue(rewritten.endswith(suffix))
+        self.assertNotIn(b"/nix/store", rewritten)
+
+    def test_hash_fallback_rejects_a_destination_that_cannot_fit(self):
+        digest = b"1" * 32
+        canonical = b"/nix/store/" + digest + b"-long-package-name"
+        destination = b"/tmp/r/.tn/" + b"0" * 32 + b"-long-package-name"
+        short_alias = b"/nix/store/" + digest + b"-x"
+        self.assertEqual(len(canonical), len(destination))
+
+        with self.assertRaisesRegex(trans_nix.DownloadError, "too long"):
+            trans_nix.rewrite_store_paths(short_alias, {canonical: destination})
+
     def test_streamed_nar_extraction_rewrites_binary_data(self):
         old = b"/nix/store/" + b"1" * 32 + b"-dependency"
         new = b"/tmp/root/.tn/00000000000000000000000000000-dependency"
