@@ -1,8 +1,8 @@
 #!/usr/bin/env python3.14
 """Install relocatable nixpkgs closures without Nix.
 
-Package metadata comes from nixmultiverse and NARs come directly from the Nix
-binary cache. A root is installed at ``$HOME/.tn/<package>/<version>`` and its
+Package metadata comes from NixHub and NARs come directly from the Nix binary
+cache. A root is installed at ``$HOME/.tn/<package>/<version>`` and its
 dependencies live beneath ``<root>/.tn``. Mise installation directories are
 symlinks to those roots. Every store-path rewrite preserves its original byte
 length, including strings in binaries, compiled data, scripts, and symlinks.
@@ -34,10 +34,13 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import BinaryIO
 
-SITE_BASE = os.environ.get("TRANS_NIX_SITE_BASE", "https://nixmultiverse.com")
+NIXHUB_BASE = os.environ.get(
+    "TRANS_NIX_NIXHUB_BASE", "https://search.devbox.sh/v2"
+).rstrip("/")
 CACHE_BASE = os.environ.get("TRANS_NIX_CACHE_BASE", "https://cache.nixos.org")
 MANIFEST_NAME = ".nix-closure-manifest.json"
 RELOCATED_DIR_NAME = ".tn"
+MAX_RELOCATED_ROOT_BYTES = 37
 SUPPORTED_PLATFORMS = {"x86_64-linux", "aarch64-linux", "aarch64-darwin"}
 NIX32_ALPHABET = "0123456789abcdfghijklmnpqrsvwxyz"
 DIGEST_RE = re.compile(r"^[0-9abcdfghijklmnpqrsvwxyz]{32}$")
@@ -82,15 +85,8 @@ def human_size(size: int) -> str:
     raise AssertionError("unreachable")
 
 
-def shard_key(package: str) -> str:
-    # Mirrors tools/build-site-data.py in nixpkgs-multiverse.
-    return "".join(c if c.isalnum() else "_" for c in package[:2].lower()) or "_"
-
-
-def metadata_url(package: str, platform: str) -> str:
-    directory = "meta" if platform == "x86_64-linux" else f"meta-{platform}"
-    shard = urllib.parse.quote(shard_key(package), safe="")
-    return f"{SITE_BASE}/{directory}/{shard}.json"
+def nixhub_url(endpoint: str, **query: str) -> str:
+    return f"{NIXHUB_BASE}/{endpoint}?{urllib.parse.urlencode(query)}"
 
 
 def request(url: str, *, retries: int = 4):
@@ -134,15 +130,10 @@ def natural_version_key(version: str) -> tuple:
     return tuple(parts)
 
 
-def resolve_version(versions: dict, selector: str) -> str:
+def resolve_version(available: list[str], selector: str) -> str:
     is_numeric = bool(NUMERIC_SELECTOR_RE.fullmatch(selector))
-    # A full x.y.z selector is exact when present. One- and two-component
-    # numeric selectors remain loose even if an identically named version
-    # exists, matching version-manager expectations for selectors like 24.
-    if selector in versions and (not is_numeric or selector.count(".") >= 2):
+    if selector in available and (not is_numeric or selector.count(".") >= 2):
         return selector
-
-    available = list(versions)
     if not available:
         raise DownloadError("the package has no indexed versions")
 
@@ -157,57 +148,112 @@ def resolve_version(versions: dict, selector: str) -> str:
     if not candidates:
         tail = ", ".join(sorted(available, key=natural_version_key)[-12:])
         raise DownloadError(
-            f"version selector {selector!r} matched nothing; newest indexed versions: {tail}"
+            f"version selector {selector!r} matched nothing; "
+            f"newest indexed versions: {tail}"
         )
-
     stable = [v for v in candidates if not PRERELEASE_RE.search(v)]
     return max(stable or candidates, key=natural_version_key)
 
 
-def fetch_package_versions(package: str, platform: str) -> dict:
-    url = metadata_url(package, platform)
-    metadata = fetch_json(url)
-    attrs = metadata.get("attrs")
-    if not isinstance(attrs, dict) or package not in attrs:
-        raise DownloadError(f"package attribute {package!r} was not found in {url}")
-    versions = attrs[package]
-    if not isinstance(versions, dict):
-        raise DownloadError(f"malformed metadata for package {package!r}")
-    return versions
-
-
-def list_package_versions(package: str, platform: str) -> list[str]:
-    versions = fetch_package_versions(package, platform)
-    installable = []
-    for version, entry in versions.items():
-        if not isinstance(version, str) or not isinstance(entry, dict):
-            continue
-        digest = entry.get("d")
-        if (
-            isinstance(digest, str)
-            and DIGEST_RE.fullmatch(digest)
-            and entry.get("ok") != 0
-        ):
-            installable.append(version)
-    if not installable:
-        raise DownloadError(f"package {package!r} has no live indexed versions")
-    return sorted(installable, key=natural_version_key)
-
-
-def resolve_package(package: str, selector: str, platform: str) -> tuple[str, str]:
-    versions = fetch_package_versions(package, platform)
-    version = resolve_version(versions, selector)
-    entry = versions[version]
-    if not isinstance(entry, dict) or not isinstance(entry.get("d"), str):
-        raise DownloadError(f"no store digest recorded for {package} {version}")
-    if entry.get("ok") == 0:
+def nixhub_store_path(system: object, context: str, output_name: str | None) -> str:
+    if not isinstance(system, dict):
+        raise DownloadError(f"NixHub has no metadata for {context}")
+    outputs = system.get("outputs")
+    if not isinstance(outputs, list):
+        raise DownloadError(f"NixHub returned malformed outputs for {context}")
+    if output_name is None:
+        selected = [
+            output
+            for output in outputs
+            if isinstance(output, dict) and output.get("default") is True
+        ]
+        description = "default outputs"
+    else:
+        selected = [
+            output
+            for output in outputs
+            if isinstance(output, dict) and output.get("name") == output_name
+        ]
+        description = f"outputs named {output_name!r}"
+    if len(selected) != 1:
         raise DownloadError(
-            f"the indexed cache artifact for {package} {version} is dead"
+            f"NixHub returned {len(selected)} {description} for {context}; expected one"
         )
+    path = selected[0].get("path")
+    if not isinstance(path, str):
+        raise DownloadError(f"NixHub returned an output without a path for {context}")
+    basename = path.removeprefix("/nix/store/")
+    if path != f"/nix/store/{basename}" or "/" in basename:
+        raise DownloadError(
+            f"NixHub returned an invalid store path for {context}: {path!r}"
+        )
+    digest, separator, name = basename.partition("-")
+    if not separator or not name or not DIGEST_RE.fullmatch(digest):
+        raise DownloadError(
+            f"NixHub returned an invalid store path for {context}: {path!r}"
+        )
+    return path
 
-    digest = entry["d"]
-    if not DIGEST_RE.fullmatch(digest):
-        raise DownloadError(f"invalid store digest in metadata: {digest!r}")
+
+def fetch_package_paths(
+    package: str, platform: str, output_name: str | None
+) -> dict[str, str]:
+    url = nixhub_url("pkg", name=package)
+    metadata = fetch_json(url)
+    releases = metadata.get("releases")
+    if metadata.get("name") != package or not isinstance(releases, list):
+        raise DownloadError(f"NixHub returned malformed releases for {package!r}")
+
+    paths = {}
+    for release in releases:
+        if not isinstance(release, dict) or not isinstance(release.get("version"), str):
+            continue
+        version = release["version"]
+        systems = release.get("platforms")
+        if not isinstance(systems, list):
+            continue
+        matching = [
+            system
+            for system in systems
+            if isinstance(system, dict) and system.get("system") == platform
+        ]
+        if len(matching) != 1:
+            continue
+        try:
+            path = nixhub_store_path(
+                matching[0], f"{package} {version} on {platform}", output_name
+            )
+        except DownloadError:
+            continue
+        if version in paths and paths[version] != path:
+            raise DownloadError(
+                f"NixHub returned conflicting {platform} paths for {package} {version}"
+            )
+        paths[version] = path
+
+    if not paths:
+        raise DownloadError(
+            f"NixHub has no installable versions of {package!r} for {platform}"
+        )
+    return paths
+
+
+def list_package_versions(
+    package: str, platform: str, output_name: str | None = None
+) -> list[str]:
+    paths = fetch_package_paths(package, platform, output_name)
+    return sorted(paths, key=natural_version_key)
+
+
+def resolve_package(
+    package: str,
+    selector: str,
+    platform: str,
+    output_name: str | None = None,
+) -> tuple[str, str]:
+    paths = fetch_package_paths(package, platform, output_name)
+    version = resolve_version(list(paths), selector)
+    digest = paths[version].removeprefix("/nix/store/").split("-", 1)[0]
     return version, digest
 
 
@@ -701,7 +747,7 @@ def build_relocations(
         if counter_width < 1:
             raise DownloadError(
                 f"relocated root is too long for dependencies: {root_path} is "
-                f"{len(root_bytes)} bytes; maximum is 37 bytes"
+                f"{len(root_bytes)} bytes; maximum is {MAX_RELOCATED_ROOT_BYTES} bytes"
             )
         capacity = 16**counter_width
         if len(dependencies) > capacity:
@@ -833,8 +879,10 @@ def combine_stats(total: dict[str, int], part: dict[str, int]) -> None:
 
 def materialize_closure(
     package: str,
+    install_prefix: str,
     version: str,
     platform: str,
+    output_name: str | None,
     root_basename: str,
     infos: dict[str, dict[str, str]],
     root_path: Path,
@@ -918,8 +966,10 @@ def materialize_closure(
         manifest = {
             "format": 3,
             "package": package,
+            "installPrefix": install_prefix,
             "version": version,
             "platform": platform,
+            "output": output_name,
             "root": root_basename,
             "installRoot": os.fspath(root_path),
             "jobs": worker_count,
@@ -963,8 +1013,8 @@ def validate_platform(platform: str) -> str:
     return platform
 
 
-def relocated_root(package: str, version: str) -> Path:
-    package = validate_segment(package, "package name")
+def relocated_root(install_prefix: str, version: str) -> Path:
+    install_prefix = validate_segment(install_prefix, "install prefix")
     version = validate_segment(version, "version")
     home = os.environ.get("HOME")
     if not home:
@@ -972,7 +1022,16 @@ def relocated_root(package: str, version: str) -> Path:
     home_path = Path(home)
     if not home_path.is_absolute():
         raise DownloadError(f"HOME must be absolute: {home!r}")
-    return home_path / RELOCATED_DIR_NAME / package / version
+    return home_path / RELOCATED_DIR_NAME / install_prefix / version
+
+
+def validate_relocated_root_length(root_path: Path) -> None:
+    length = len(os.fsencode(root_path))
+    if length > MAX_RELOCATED_ROOT_BYTES:
+        raise DownloadError(
+            f"relocated root is too long: {root_path} is {length} bytes; "
+            f"maximum is {MAX_RELOCATED_ROOT_BYTES} bytes"
+        )
 
 
 def load_manifest(root_path: Path) -> dict | None:
@@ -986,17 +1045,21 @@ def load_manifest(root_path: Path) -> dict | None:
 def manifest_matches(
     manifest: dict | None,
     package: str,
+    install_prefix: str,
     version: str,
     platform: str,
     root_basename: str,
     root_path: Path,
+    output_name: str | None = None,
 ) -> bool:
     return bool(
         manifest
         and manifest.get("format") == 3
         and manifest.get("package") == package
+        and manifest.get("installPrefix", manifest.get("package")) == install_prefix
         and manifest.get("version") == version
         and manifest.get("platform") == platform
+        and manifest.get("output") == output_name
         and manifest.get("root") == root_basename
         and manifest.get("installRoot") == os.fspath(root_path)
     )
@@ -1052,6 +1115,7 @@ def parse_args() -> argparse.Namespace:
     )
     versions.add_argument("package", help="nixpkgs attribute name, e.g. nodejs")
     versions.add_argument("--platform", required=True, help="indexed Nix system")
+    versions.add_argument("--output", help="named output instead of the NixHub default")
     versions.add_argument("--json", action="store_true", help="emit one JSON array")
 
     install = subparsers.add_parser(
@@ -1061,6 +1125,11 @@ def parse_args() -> argparse.Namespace:
     install.add_argument("version", help="exact version, numeric prefix, or latest")
     install.add_argument("link", type=Path, help="mise installation symlink to create")
     install.add_argument("--platform", required=True, help="indexed Nix system")
+    install.add_argument(
+        "--install-prefix",
+        help="directory name beneath $HOME/.tn (default: package name)",
+    )
+    install.add_argument("--output", help="named output instead of the NixHub default")
     install.add_argument(
         "--force", action="store_true", help="replace mismatched roots or links"
     )
@@ -1079,6 +1148,11 @@ def parse_args() -> argparse.Namespace:
     remove.add_argument("version", help="exact resolved version")
     remove.add_argument("--platform", required=True, help="manifest Nix system")
     remove.add_argument(
+        "--install-prefix",
+        help="directory name beneath $HOME/.tn (default: package name)",
+    )
+    remove.add_argument("--output", help="named output recorded in the manifest")
+    remove.add_argument(
         "--force", action="store_true", help="remove even if the manifest mismatches"
     )
     return parser.parse_args()
@@ -1087,7 +1161,12 @@ def parse_args() -> argparse.Namespace:
 def run_list_versions(args: argparse.Namespace) -> int:
     validate_segment(args.package, "package name")
     platform = validate_platform(args.platform)
-    versions = list_package_versions(args.package, platform)
+    output_name = (
+        validate_segment(args.output, "output name")
+        if args.output is not None
+        else None
+    )
+    versions = list_package_versions(args.package, platform, output_name)
     if args.json:
         print(json.dumps(versions, separators=(",", ":")))
     else:
@@ -1097,7 +1176,15 @@ def run_list_versions(args: argparse.Namespace) -> int:
 
 def run_install(args: argparse.Namespace) -> int:
     validate_segment(args.package, "package name")
+    install_prefix = validate_segment(
+        args.install_prefix or args.package, "install prefix"
+    )
     platform = validate_platform(args.platform)
+    output_name = (
+        validate_segment(args.output, "output name")
+        if args.output is not None
+        else None
+    )
     if args.jobs < 1:
         raise DownloadError("--jobs must be at least 1")
 
@@ -1105,10 +1192,15 @@ def run_install(args: argparse.Namespace) -> int:
     if link == Path("/"):
         raise DownloadError("refusing to use the filesystem root as a mise link")
 
-    version, digest = resolve_package(args.package, args.version, platform)
-    root_path = relocated_root(args.package, version)
+    version, digest = resolve_package(args.package, args.version, platform, output_name)
+    root_path = relocated_root(install_prefix, version)
+    validate_relocated_root_length(root_path)
     root_path.parent.mkdir(parents=True, exist_ok=True)
-    eprint(f"resolved  {args.package} {args.version!r} -> {version} ({platform})")
+    output_label = output_name or "default"
+    eprint(
+        f"resolved  {args.package} {args.version!r} -> {version} "
+        f"({platform}, output {output_label})"
+    )
     eprint(f"scanning closure metadata with {args.jobs} workers")
     root_basename, infos = discover_closure(digest, args.jobs)
 
@@ -1117,10 +1209,12 @@ def run_install(args: argparse.Namespace) -> int:
         if manifest_matches(
             manifest,
             args.package,
+            install_prefix,
             version,
             platform,
             root_basename,
             root_path,
+            output_name,
         ):
             install_link(link, root_path, args.force)
             print(link)
@@ -1134,8 +1228,10 @@ def run_install(args: argparse.Namespace) -> int:
 
     count, downloaded_bytes, stats = materialize_closure(
         args.package,
+        install_prefix,
         version,
         platform,
+        output_name,
         root_basename,
         infos,
         root_path,
@@ -1155,7 +1251,15 @@ def run_install(args: argparse.Namespace) -> int:
 
 def run_remove(args: argparse.Namespace) -> int:
     platform = validate_platform(args.platform)
-    root_path = relocated_root(args.package, args.version)
+    install_prefix = validate_segment(
+        args.install_prefix or args.package, "install prefix"
+    )
+    output_name = (
+        validate_segment(args.output, "output name")
+        if args.output is not None
+        else None
+    )
+    root_path = relocated_root(install_prefix, args.version)
     if not path_lexists(root_path):
         raise DownloadError(f"relocated root does not exist: {root_path}")
     manifest = load_manifest(root_path)
@@ -1163,8 +1267,10 @@ def run_remove(args: argparse.Namespace) -> int:
         manifest
         and manifest.get("format") == 3
         and manifest.get("package") == args.package
+        and manifest.get("installPrefix", manifest.get("package")) == install_prefix
         and manifest.get("version") == args.version
         and manifest.get("platform") == platform
+        and manifest.get("output") == output_name
         and manifest.get("installRoot") == os.fspath(root_path)
     )
     if not matches and not args.force:

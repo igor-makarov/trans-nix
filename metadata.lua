@@ -8,7 +8,7 @@ PLUGIN = { -- luacheck: ignore
     minRuntimeVersion = "0.3.0",
     depends = { "python" },
     notes = {
-        "Uses nixmultiverse metadata and cache.nixos.org; Nix is not required.",
+        "Uses NixHub metadata and cache.nixos.org; Nix is not required.",
         "Configure Python 3.14+ as a mise tool before using this backend.",
         "Relocated roots persist under $HOME/.tn after mise uninstall.",
     },

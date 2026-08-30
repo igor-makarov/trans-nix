@@ -37,34 +37,118 @@ def nar_hash(data):
 
 
 class VersionTests(unittest.TestCase):
-    def test_numeric_and_latest_selectors(self):
-        versions = {
-            "23.9.0": {},
-            "24.1.0-rc1": {},
-            "24.1.0": {},
-            "24.14.0": {},
-            "25.0.0-beta1": {},
+    @staticmethod
+    def system(platform="x86_64-linux", *, default=True, path=None):
+        return {
+            "system": platform,
+            "outputs": [
+                {
+                    "name": "out",
+                    "path": path or "/nix/store/" + "1" * 32 + "-demo",
+                    "default": default,
+                }
+            ],
         }
+
+    def test_numeric_and_latest_selectors(self):
+        versions = [
+            "23.9.0",
+            "24.1.0-rc1",
+            "24.1.0",
+            "24.14.0",
+            "25.0.0-beta1",
+        ]
         self.assertEqual(trans_nix.resolve_version(versions, "24"), "24.14.0")
         self.assertEqual(trans_nix.resolve_version(versions, "latest"), "24.14.0")
         self.assertEqual(trans_nix.resolve_version(versions, "24.1.0"), "24.1.0")
 
-    def test_version_listing_filters_dead_and_malformed_entries(self):
-        digest = "1" * 32
-        versions = {
-            "2.0.0": {"d": digest},
-            "1.10.0": {"d": digest},
-            "1.2.0": {"d": digest},
-            "3.0.0": {"d": digest, "ok": 0},
-            "broken": {},
+    def test_version_listing_filters_by_platform_and_default_output(self):
+        metadata = {
+            "name": "demo",
+            "releases": [
+                {"version": "2.0.0", "platforms": [self.system()]},
+                {"version": "1.10.0", "platforms": [self.system()]},
+                {"version": "1.2.0", "platforms": [self.system()]},
+                {
+                    "version": "3.0.0",
+                    "platforms": [self.system("aarch64-linux")],
+                },
+                {
+                    "version": "broken",
+                    "platforms": [self.system(default=False)],
+                },
+                {"version": "malformed", "platforms": "not-a-list"},
+            ],
         }
-        with mock.patch.object(
-            trans_nix, "fetch_package_versions", return_value=versions
-        ):
+        with mock.patch.object(trans_nix, "fetch_json", return_value=metadata) as fetch:
             self.assertEqual(
                 trans_nix.list_package_versions("demo", "x86_64-linux"),
                 ["1.2.0", "1.10.0", "2.0.0"],
             )
+        fetch.assert_called_once_with("https://search.devbox.sh/v2/pkg?name=demo")
+
+    def test_resolution_uses_package_platform_default_without_second_request(self):
+        metadata = {
+            "name": "demo",
+            "releases": [
+                {
+                    "version": "24.14.0",
+                    "platforms": [self.system("aarch64-darwin")],
+                },
+                {
+                    "version": "24.14.1",
+                    "platforms": [
+                        self.system(
+                            "aarch64-darwin",
+                            path="/nix/store/" + "2" * 32 + "-demo-24.14.1",
+                        )
+                    ],
+                },
+            ],
+        }
+        with mock.patch.object(trans_nix, "fetch_json", return_value=metadata) as fetch:
+            self.assertEqual(
+                trans_nix.resolve_package("demo", "24.14", "aarch64-darwin"),
+                ("24.14.1", "2" * 32),
+            )
+        fetch.assert_called_once_with("https://search.devbox.sh/v2/pkg?name=demo")
+
+    def test_resolution_rejects_missing_platform(self):
+        metadata = {
+            "name": "demo",
+            "releases": [
+                {"version": "1.0", "platforms": [self.system("x86_64-linux")]}
+            ],
+        }
+        with (
+            mock.patch.object(trans_nix, "fetch_json", return_value=metadata),
+            self.assertRaisesRegex(trans_nix.DownloadError, "no installable versions"),
+        ):
+            trans_nix.resolve_package("demo", "1", "aarch64-linux")
+
+    def test_default_output_must_be_unique(self):
+        system = self.system()
+        system["outputs"].append(dict(system["outputs"][0]))
+        with self.assertRaisesRegex(trans_nix.DownloadError, "2 default outputs"):
+            trans_nix.nixhub_store_path(system, "demo", None)
+
+    def test_named_output_is_selected(self):
+        system = self.system()
+        system["outputs"].append(
+            {
+                "name": "lib",
+                "path": "/nix/store/" + "2" * 32 + "-demo-lib",
+            }
+        )
+        self.assertEqual(
+            trans_nix.nixhub_store_path(system, "demo", "lib"),
+            "/nix/store/" + "2" * 32 + "-demo-lib",
+        )
+
+    def test_default_output_store_path_is_validated(self):
+        system = self.system(path="/tmp/not-the-store")
+        with self.assertRaisesRegex(trans_nix.DownloadError, "invalid store path"):
+            trans_nix.nixhub_store_path(system, "demo", None)
 
 
 class RelocationTests(unittest.TestCase):
@@ -172,12 +256,41 @@ class RelocationTests(unittest.TestCase):
 
 
 class InstallRootTests(unittest.TestCase):
-    def test_relocated_root_mirrors_package_and_version(self):
+    def test_relocated_root_mirrors_install_prefix_and_version(self):
         with mock.patch.dict(os.environ, {"HOME": "/home/tester"}):
             self.assertEqual(
                 trans_nix.relocated_root("nodejs", "24.14.0"),
                 Path("/home/tester/.tn/nodejs/24.14.0"),
             )
+
+    def test_install_prefix_can_differ_from_nixhub_package(self):
+        root = Path("/home/test/.tn/weasyprint/69.0")
+        manifest = {
+            "format": 3,
+            "package": "python314Packages.weasyprint",
+            "installPrefix": "weasyprint",
+            "version": "69.0",
+            "platform": "aarch64-linux",
+            "root": "1" * 32 + "-python3.14-weasyprint-69.0",
+            "installRoot": str(root),
+        }
+        self.assertTrue(
+            trans_nix.manifest_matches(
+                manifest,
+                "python314Packages.weasyprint",
+                "weasyprint",
+                "69.0",
+                "aarch64-linux",
+                manifest["root"],
+                root,
+            )
+        )
+
+    def test_install_prefix_that_makes_root_too_long_is_rejected(self):
+        with mock.patch.dict(os.environ, {"HOME": "/home/tester"}):
+            root = trans_nix.relocated_root("x" * 30, "1.0")
+        with self.assertRaisesRegex(trans_nix.DownloadError, "maximum is 37 bytes"):
+            trans_nix.validate_relocated_root_length(root)
 
     def test_install_link_replaces_mise_empty_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -209,8 +322,10 @@ class InstallRootTests(unittest.TestCase):
             (root / trans_nix.MANIFEST_NAME).write_text(json.dumps(manifest))
             args = mock.Mock(
                 package="nodejs",
+                install_prefix=None,
                 version="24",
                 platform="aarch64-darwin",
+                output=None,
                 jobs=4,
                 link=home / "mise" / "24.14.0",
                 force=False,
@@ -222,6 +337,7 @@ class InstallRootTests(unittest.TestCase):
                     "resolve_package",
                     return_value=("24.14.0", "1" * 32),
                 ),
+                mock.patch.object(trans_nix, "validate_relocated_root_length"),
                 mock.patch.object(
                     trans_nix,
                     "discover_closure",
@@ -248,6 +364,7 @@ class InstallRootTests(unittest.TestCase):
             trans_nix.manifest_matches(
                 manifest,
                 "nodejs",
+                "nodejs",
                 "24.14.0",
                 "aarch64-linux",
                 manifest["root"],
@@ -259,6 +376,7 @@ class InstallRootTests(unittest.TestCase):
         self.assertFalse(
             trans_nix.manifest_matches(
                 changed,
+                "nodejs",
                 "nodejs",
                 "24.14.0",
                 "aarch64-linux",

@@ -39,7 +39,7 @@ experimental = true
 
 [tools]
 python = "3.14"
-"trans-nix:nodejs" = "24.14"
+"trans-nix:nodejs" = "24.11"
 EOF
 
 mise plugin link --force trans-nix "$repo_dir"
@@ -51,12 +51,12 @@ cli_versions=$("$repo_dir/bin/trans-nix" list-versions nodejs --platform "$platf
 [[ $cli_versions == \[* ]]
 versions=$(mise ls-remote trans-nix:nodejs)
 [[ -n $versions ]]
-version_24_14=$(mise latest 'trans-nix:nodejs@24.14')
+version_24_11=$(mise latest 'trans-nix:nodejs@24.11')
 version_latest=$(mise latest 'trans-nix:nodejs')
-[[ $version_24_14 == 24.14.* ]]
+[[ $version_24_11 == 24.11.1 ]]
 [[ -n $version_latest ]]
-[[ $version_24_14 != "$version_latest" ]]
-printf 'resolved nodejs@24.14 -> %s\n' "$version_24_14"
+[[ $version_24_11 != "$version_latest" ]]
+printf 'resolved nodejs@24.11 -> %s\n' "$version_24_11"
 printf 'resolved nodejs@latest -> %s\n' "$version_latest"
 
 verify_node() {
@@ -86,7 +86,7 @@ EOF
     grep -Eq '"exactRewrites": [1-9][0-9]*' "$expected/.nix-closure-manifest.json"
 
     output=$("$install_path/bin/node" --version)
-    [[ $output == "v$version" ]]
+    [[ $output == "v$version" || $output == "v$version-"* ]]
     "$install_path/bin/node" -e 'console.log(process.platform, process.arch)'
 }
 
@@ -100,7 +100,7 @@ experimental = true
 
 [tools]
 python = "3.14"
-"trans-nix:pango" = "$version"
+"trans-nix:pango" = { version = "$version", output = "out" }
 EOF
     mise install "trans-nix:pango@$version"
     install_path=$(mise where "trans-nix:pango@$version")
@@ -112,6 +112,7 @@ EOF
     [[ -d $expected/.tn ]]
     grep -q '"format": 3' "$expected/.nix-closure-manifest.json"
     grep -q "\"platform\": \"$platform\"" "$expected/.nix-closure-manifest.json"
+    grep -q '"output": "out"' "$expected/.nix-closure-manifest.json"
     grep -Eq '"exactRewrites": [1-9][0-9]*' "$expected/.nix-closure-manifest.json"
 
     library=$(find "$install_path/lib" -maxdepth 1 -name 'libpango-1.0*' -print -quit)
@@ -130,9 +131,67 @@ print(f"loaded Pango {actual}")
 PY
 }
 
-verify_node 24.14 "$version_24_14"
+verify_weasyprint() {
+    local version install_path direct_install_path expected output info html pdf
+
+    cat >"$MISE_CONFIG_DIR/config.toml" <<'EOF'
+[settings]
+experimental = true
+
+[tool_alias]
+weasyprint = "trans-nix:weasyprint[package='python314Packages.weasyprint']"
+
+[tools]
+python = "3.14"
+weasyprint = "latest"
+EOF
+    version=$(mise latest weasyprint)
+    [[ -n $version ]]
+    mise install weasyprint@latest
+    install_path=$(mise where "weasyprint@$version")
+    expected="$HOME/.tn/weasyprint/$version"
+
+    [[ -L $install_path ]]
+    [[ $(readlink "$install_path") == "$expected" ]]
+    [[ -f $expected/.nix-closure-manifest.json ]]
+    grep -q '"package": "python314Packages.weasyprint"' "$expected/.nix-closure-manifest.json"
+    grep -q '"installPrefix": "weasyprint"' "$expected/.nix-closure-manifest.json"
+    grep -q "\"platform\": \"$platform\"" "$expected/.nix-closure-manifest.json"
+
+    output=$("$install_path/bin/weasyprint" --version)
+    [[ $output == *"$version"* ]]
+    info=$("$install_path/bin/weasyprint" --info)
+    grep -Eq 'Python version: 3\.14\.' <<<"$info"
+
+    html="$project_dir/weasyprint.html"
+    pdf="$project_dir/weasyprint.pdf"
+    printf '<h1>trans-nix</h1>\n' >"$html"
+    "$install_path/bin/weasyprint" "$html" "$pdf"
+    [[ $(head -c 5 "$pdf") == '%PDF-' ]]
+
+    cat >"$MISE_CONFIG_DIR/config.toml" <<'EOF'
+[settings]
+experimental = true
+
+[tools]
+python = "3.14"
+"trans-nix:weasyprint[package='python314Packages.weasyprint']" = "latest"
+EOF
+    mise install
+    direct_install_path=$(mise where "trans-nix:weasyprint@$version")
+    [[ -L $direct_install_path ]]
+    [[ $direct_install_path != "$install_path" ]]
+    [[ $(readlink "$direct_install_path") == "$expected" ]]
+    output=$("$direct_install_path/bin/weasyprint" --version)
+    [[ $output == *"$version"* ]]
+
+    printf 'rendered WeasyPrint %s with Python 3.14 using alias and direct syntax\n' "$version"
+}
+
+verify_node 24.11 "$version_24_11"
 verify_node latest "$version_latest"
 verify_pango
+verify_weasyprint
 
 python_path=$(mise where python@3.14)
 "$python_path/bin/python3" --version

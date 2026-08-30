@@ -20,18 +20,32 @@ function PLUGIN:BackendInstall(ctx)
     if options.force ~= nil and type(options.force) ~= "boolean" then
         error("trans-nix option 'force' must be a boolean")
     end
-
+    if options.output ~= nil and (type(options.output) ~= "string" or options.output == "") then
+        error("trans-nix option 'output' must be a non-empty string")
+    end
+    if options.package ~= nil and (type(options.package) ~= "string" or options.package == "") then
+        error("trans-nix option 'package' must be a non-empty string")
+    end
+    if options.install_prefix ~= nil and (type(options.install_prefix) ~= "string" or options.install_prefix == "") then
+        error("trans-nix option 'install_prefix' must be a non-empty string")
+    end
     local trans_nix = require("lib.trans_nix")
     local args = {
         "install",
-        ctx.tool,
+        options.package or ctx.tool,
         ctx.version,
         ctx.install_path,
         "--platform",
         trans_nix.platform(),
+        "--install-prefix",
+        options.install_prefix or ctx.tool,
         "--jobs",
         tostring(jobs),
     }
+    if options.output then
+        table.insert(args, "--output")
+        table.insert(args, options.output)
+    end
     if options.force then
         table.insert(args, "--force")
     end

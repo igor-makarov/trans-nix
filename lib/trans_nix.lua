@@ -21,7 +21,7 @@ function M.platform()
         end
     end
 
-    error("nixmultiverse does not index this platform: " .. os_type .. "/" .. arch_type)
+    error("trans-nix does not support this platform: " .. os_type .. "/" .. arch_type)
 end
 
 function M.exec(args)

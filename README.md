@@ -2,7 +2,7 @@
 
 `trans-nix` is a [mise backend plugin](https://mise.jdx.dev/backend-plugin-development.html) that translates the embedded `/nix/store` paths in nixpkgs closures to a relocatable, user-owned layout—without installing or invoking Nix.
 
-It resolves package versions from [nixpkgs-multiverse](https://github.com/fzakaria/nixpkgs-multiverse), downloads complete closures directly from `cache.nixos.org`, verifies archive and NAR hashes, and rewrites their store paths as it extracts them beneath `$HOME/.tn`.
+It resolves package versions and platform-specific default outputs through [NixHub](https://www.jetify.com/docs/nixhub/), downloads complete closures directly from `cache.nixos.org`, verifies archive and NAR hashes, and rewrites their store paths as it extracts them beneath `$HOME/.tn`.
 
 It does **not**:
 
@@ -13,13 +13,13 @@ It does **not**:
 
 ## Supported platforms
 
-The plugin supports every platform currently published by the nixmultiverse site index:
+The plugin supports these Nix systems:
 
 - `x86_64-linux`
 - `aarch64-linux`
 - `aarch64-darwin`
 
-Intel macOS is not indexed and is rejected.
+Intel macOS is not supported and is rejected.
 
 ## Installation
 
@@ -42,7 +42,7 @@ mise install
 node --version
 ```
 
-The plugin declares `python` as a mise dependency, so a configured Python is ordered before trans-nix and added to its hook environment. No per-tool `depends` option is needed. Plugin metadata does not implicitly select a Python version, so configure Python 3.14+ as shown above. Python 3.14 provides the standard-library Zstandard decompressor needed by modern cache archives. Version listing uses mise's built-in Lua HTTP client so it can run before Python has been installed.
+The plugin declares `python` as a mise dependency, so a configured Python is ordered before trans-nix and added to its hook environment. No per-tool `depends` option is needed. Plugin metadata does not implicitly select a Python version, so configure Python 3.14+ as shown above. Python 3.14 provides the standard-library Zstandard decompressor needed by modern cache archives. All Lua hooks delegate to the internal Python CLI.
 
 ### Configuration
 
@@ -50,22 +50,37 @@ The plugin declares `python` as a mise dependency, so a configured Python is ord
 [plugins]
 trans-nix = "https://github.com/igor-makarov/trans-nix"
 
+[tool_alias]
+weasyprint = "trans-nix:weasyprint[package='python314Packages.weasyprint']"
+
 [tools]
 python = "3.14"
 "trans-nix:nodejs" = { version = "24", jobs = 16 }
+"trans-nix:pango" = { version = "1.57.1", output = "out" }
+weasyprint = "latest"
+```
+
+The same package override can be used without a tool alias:
+
+```toml
+[tools]
+"trans-nix:weasyprint[package='python314Packages.weasyprint']" = "latest"
 ```
 
 Supported tool options:
 
 - `jobs` — positive integer controlling parallel narinfo fetches, downloads, extraction, rewriting, and signing; default `16`.
 - `force` — replace an existing relocated root or mise link when its manifest does not match; default `false`.
+- `output` — select a named NixHub output instead of the output marked as default. For example, Pango’s default is `bin`, while its shared libraries are in `out`.
+- `package` — query a different NixHub package than the backend tool name. This supports short mise aliases for long nixpkgs attribute paths.
+- `install_prefix` — directory name beneath `$HOME/.tn`; defaults to the backend tool name, such as `weasyprint` in the alias above.
 
 ## Relocated layout
 
-A resolved `nodejs@24.14.0` is stored as:
+A resolved `nodejs@24.11.1` is stored as:
 
 ```text
-$HOME/.tn/nodejs/24.14.0/
+$HOME/.tn/nodejs/24.11.1/
 ├── bin/
 ├── lib/
 ├── .tn/
@@ -78,24 +93,24 @@ $HOME/.tn/nodejs/24.14.0/
 The mise installation path is a symlink to that persistent root:
 
 ```text
-~/.local/share/mise/installs/.../24.14.0
-  -> ~/.tn/nodejs/24.14.0
+~/.local/share/mise/installs/.../24.11.1
+  -> ~/.tn/nodejs/24.11.1
 ```
 
 Dependencies are sorted by complete source store basename and assigned deterministic, zero-padded hexadecimal counters. The counter width is computed before any archive is downloaded:
 
 ```text
-counter width = 38 - byte_length($HOME/.tn/<package>/<resolved-version>)
+counter width = 38 - byte_length($HOME/.tn/<install-prefix>/<resolved-version>)
 capacity      = 16 ** counter_width
 ```
 
-For example, `/Users/igor/.tn/nodejs/24.14.0` is 30 bytes, producing eight-digit counters. If the absolute root is too long or its counter cannot represent the closure, installation fails during metadata discovery.
+For example, `/Users/igor/.tn/nodejs/24.11.1` is 30 bytes, producing eight-digit counters. The absolute root may be at most 37 bytes; a longer `install_prefix` is rejected before closure discovery. Installation also fails if the resulting counter cannot represent the closure.
 
 Every replacement has exactly the same byte length as its original store path:
 
 ```text
 /nix/store/<hash>-glibc-2.40
-→ $HOME/.tn/nodejs/24.14.0/.tn/00000000-glibc-2.40
+→ $HOME/.tn/nodejs/24.11.1/.tn/00000000-glibc-2.40
 ```
 
 References to the root package are rewritten to the root directory and padded with redundant trailing `/` separators. Rewriting occurs while each NAR payload is streamed, including binary files, scripts, compiled data, and symlink targets. Modified Mach-O binaries are ad-hoc re-signed on macOS.
@@ -109,7 +124,7 @@ The root package may not already contain a `.tn` entry because that name is rese
 Remove one explicitly with the internal CLI boundary:
 
 ```sh
-/path/to/plugin/bin/trans-nix remove nodejs 24.14.0 \
+/path/to/plugin/bin/trans-nix remove nodejs 24.11.1 \
   --platform aarch64-darwin
 ```
 
@@ -123,19 +138,22 @@ The Python implementation is encapsulated in `bin/trans-nix`. It is primarily th
 # Ascending live versions
 bin/trans-nix list-versions nodejs --platform aarch64-darwin
 bin/trans-nix list-versions nodejs --platform aarch64-darwin --json
+bin/trans-nix list-versions pango --platform aarch64-darwin --output out
 
 # Install beneath $HOME/.tn and create the requested link
 bin/trans-nix install nodejs 24 /absolute/path/to/mise-install \
   --platform aarch64-darwin --jobs 16
+bin/trans-nix install pango 1.57.1 /absolute/path/to/pango-install \
+  --platform aarch64-darwin --output out
 
 # Replace a mismatched existing root or link
 bin/trans-nix install nodejs latest /absolute/path/to/mise-install \
   --platform aarch64-darwin --force
 ```
 
-`VERSION` may be exact, a numeric prefix such as `24` or `24.14`, or `latest`. `--platform` is always explicit. Direct CLI use requires Python 3.14+.
+`VERSION` may be exact, a numeric prefix such as `24` or `24.11`, or `latest`. `--platform` is required. `--install-prefix NAME` defaults to the package name. `--output NAME` selects that named output; without it, the NixHub default is used. Direct CLI use requires Python 3.14+.
 
-For fixture testing, the CLI's endpoints can be overridden with `TRANS_NIX_SITE_BASE` and `TRANS_NIX_CACHE_BASE`.
+For fixture testing, the CLI's endpoints can be overridden with `TRANS_NIX_NIXHUB_BASE` and `TRANS_NIX_CACHE_BASE`.
 
 ## Integrity and security
 
