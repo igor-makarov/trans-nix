@@ -1,48 +1,30 @@
 # trans-nix
 
-`trans-nix` is a [mise backend plugin](https://mise.jdx.dev/backend-plugin-development.html) that translates the embedded `/nix/store` paths in nixpkgs closures to a relocatable, user-owned layout—without installing or invoking Nix.
+`trans-nix` is a [mise backend plugin](https://mise.jdx.dev/backend-plugin-development.html) that works by translating the embedded `/nix/store` paths in nixpkgs closures to a relocatable, user-owned layout—without installing or invoking Nix.
 
-It resolves package versions and platform-specific default outputs through [NixHub](https://www.jetify.com/docs/nixhub/), downloads complete closures directly from `cache.nixos.org`, verifies archive and NAR hashes, and rewrites their store paths as it extracts them beneath `$HOME/.tn`.
+It resolves packages through [NixHub](https://www.jetify.com/docs/nixhub/), downloads them from `cache.nixos.org` and rewrites their store paths as it extracts them into `$HOME/.tn`.
 
 It does **not**:
 
-- install or execute `nix`;
-- evaluate derivations, flakes, or nixpkgs;
-- require `/nix/store`;
-- use a mount namespace, `proot`, or `CAP_SYS_USER_NS`.
+- install or execute `nix`
+- evaluate derivations, flakes, or nixpkgs
+- require access to `/nix/store`
 
 ## Supported platforms
-
-The plugin supports these Nix systems:
 
 - `x86_64-linux`
 - `aarch64-linux`
 - `aarch64-darwin`
 
-Intel macOS is not supported and is rejected.
-
 ## Installation
-
-```sh
-mise plugin install trans-nix https://github.com/igor-makarov/trans-nix
-```
-
-Configure the managed Python explicitly:
 
 ```toml
 [tools]
-python = "3.14"
-"trans-nix:nodejs" = "24"
+python = "latest" # the plugin requires Python 3.14+
+
+[plugins]
+trans-nix = "https://github.com/igor-makarov/trans-nix#1.1.0"
 ```
-
-Then install and activate normally:
-
-```sh
-mise install
-node --version
-```
-
-The plugin declares `python` as a mise dependency, so a configured Python is ordered before trans-nix and added to its hook environment. No per-tool `depends` option is needed. Plugin metadata does not implicitly select a Python version, so configure Python 3.14+ as shown above. Python 3.14 provides the standard-library Zstandard decompressor needed by modern cache archives. All Lua hooks delegate to the internal Python CLI.
 
 ### Configuration
 
@@ -51,12 +33,12 @@ The plugin declares `python` as a mise dependency, so a configured Python is ord
 trans-nix = "https://github.com/igor-makarov/trans-nix"
 
 [tool_alias]
-weasyprint = "trans-nix:weasyprint[package='python314Packages.weasyprint']"
+weasyprint = "trans-nix:weasyprint[package='python314Packages.weasyprint']" # long package name
 
 [tools]
-python = "3.14"
-"trans-nix:nodejs" = { version = "24", jobs = 16 }
-"trans-nix:pango" = { version = "1.57.1", output = "out" }
+python = "latest"
+"trans-nix:nodejs" = "24"
+"trans-nix:pango" = { version = "1.57.1", output = "out" } # specific derivation output
 weasyprint = "latest"
 ```
 
@@ -69,8 +51,6 @@ The same package override can be used without a tool alias:
 
 Supported tool options:
 
-- `jobs` — positive integer controlling parallel narinfo fetches, downloads, extraction, rewriting, and signing; default `16`.
-- `force` — replace an existing relocated root or mise link when its manifest does not match; default `false`.
 - `output` — select a named NixHub output instead of the output marked as default. For example, Pango’s default is `bin`, while its shared libraries are in `out`.
 - `package` — query a different NixHub package than the backend tool name. This supports short mise aliases for long nixpkgs attribute paths.
 - `install_prefix` — directory name beneath `$HOME/.tn`; defaults to the backend tool name, such as `weasyprint` in the alias above.
