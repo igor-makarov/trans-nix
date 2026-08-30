@@ -1,0 +1,6 @@
+.git
+.gitignore
+.ruff_cache
+**/__pycache__
+*.pyc
+mise.lock

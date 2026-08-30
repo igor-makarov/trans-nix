@@ -1,0 +1,41 @@
+[env]
+MISE_USE_VERSIONS_HOST = "0"
+
+[tools]
+actionlint = "latest"
+hk = "latest"
+lua = "5.4"
+lua-language-server = "latest"
+pkl = "latest"
+python = "3.14"
+ruff = "latest"
+shellcheck = "latest"
+stylua = "latest"
+
+[tasks.format]
+description = "Format Lua and Python sources"
+run = [
+  "stylua metadata.lua hooks/ lib/",
+  "ruff format bin/trans-nix tests/",
+  "ruff check --fix bin/trans-nix tests/",
+]
+
+[tasks.lint]
+description = "Run static checks"
+run = "hk check"
+
+[tasks."test:unit"]
+description = "Run offline Python unit tests"
+run = "python3 -m unittest discover -s tests -v"
+
+[tasks."test:e2e"]
+description = "Install and execute Node.js natively without Nix"
+run = "tests/e2e.sh"
+
+[tasks."test:linux"]
+description = "Run the Node.js E2E suite in the Linux Docker image"
+run = "tests/docker.sh"
+
+[tasks."test:all"]
+description = "Run local native and Docker verification"
+depends = ["lint", "test:unit", "test:e2e", "test:linux"]

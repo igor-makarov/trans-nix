@@ -1,0 +1,11 @@
+{
+  "unsandboxedCommands": [
+    "gh run list *",
+    "gh run view *",
+    "gh run watch *",
+    "mise run lint",
+    "mise run test:e2e",
+    "mise run test:linux",
+    "mise run test:all"
+  ]
+}
