@@ -4,21 +4,25 @@ The Python implementation is encapsulated in `bin/trans-nix`. It is primarily th
 
 ```sh
 # Ascending live versions
-bin/trans-nix list-versions nodejs --platform aarch64-darwin
-bin/trans-nix list-versions nodejs --platform aarch64-darwin --json
-bin/trans-nix list-versions pango --platform aarch64-darwin --output out
+bin/trans-nix list-versions nodejs aarch64-darwin
+bin/trans-nix list-versions nodejs aarch64-darwin --json
+bin/trans-nix list-versions pango aarch64-darwin --nix-package-output out
 
-# Install beneath $HOME/.tn and create the requested link
-bin/trans-nix install nodejs 24 /absolute/path/to/mise-install \
-  --platform aarch64-darwin --jobs 16
-bin/trans-nix install pango 1.57.1 /absolute/path/to/pango-install \
-  --platform aarch64-darwin --output out
+# Install beneath $HOME/.tn and create the requested installation symlink
+bin/trans-nix install nodejs 24 aarch64-darwin /absolute/path/to/mise-install \
+  --jobs 16
+bin/trans-nix install pango 1.57.1 aarch64-darwin /absolute/path/to/pango-install \
+  --nix-package-output out
 
-# Replace a mismatched existing root or link
-bin/trans-nix install nodejs latest /absolute/path/to/mise-install \
-  --platform aarch64-darwin --force
+# Use a short storage directory beneath $HOME/.tn
+bin/trans-nix install python314Packages.weasyprint latest aarch64-darwin \
+  /absolute/path/to/weasyprint-install --short-storage-slug weasyprint
+
+# Replace a mismatched existing root or installation path
+bin/trans-nix install nodejs latest aarch64-darwin /absolute/path/to/mise-install \
+  --force
 ```
 
-`VERSION` may be exact, a numeric prefix such as `24` or `24.11`, or `latest`. `--platform` is required. `--install-prefix NAME` defaults to the package name. `--output NAME` selects that named output; without it, the NixHub default is used. Direct CLI use requires Python 3.14+.
+`VERSION` may be exact, a numeric prefix such as `24` or `24.11`, or `latest`. `PLATFORM` is positional. `--short-storage-slug NAME` defaults to the package name. `--nix-package-output NAME` selects that named output; without it, the NixHub default is used. Direct CLI use requires Python 3.14+.
 
 For fixture testing, the CLI's endpoints can be overridden with `TRANS_NIX_NIXHUB_BASE` and `TRANS_NIX_CACHE_BASE`.

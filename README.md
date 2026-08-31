@@ -35,25 +35,27 @@ trans-nix = "https://github.com/igor-makarov/trans-nix"
 
 [tool_alias]
 # long package name tool alias
-weasyprint = "trans-nix:weasyprint[package='python314Packages.weasyprint']"
+weasyprint = "trans-nix:weasyprint[nix-package='python314Packages.weasyprint']"
 
 [tools]
 python = "latest"
 # simple version
 "trans-nix:nodejs" = "24"
 # specific derivation output
-"trans-nix:pango" = { version = "1.57.1", output = "out" }
+"trans-nix:pango" = { version = "1.57.1", nix-package-output = "out" }
 # use tool alias above
 weasyprint = "latest"
 # long package name without a tool alias
-"trans-nix:weasyprint[package='python314Packages.weasyprint']" = "latest"
+"trans-nix:weasyprint[nix-package='python314Packages.weasyprint']" = "latest"
 ```
 
 Supported tool options:
 
-- `output` — select a named NixHub output instead of the output marked as default. For example, Pango’s default is `bin`, while its shared libraries are in `out`.
-- `package` — query a different NixHub package than the backend tool name. This supports short mise aliases for long nixpkgs attribute paths.
-- `install_prefix` — directory name beneath `$HOME/.tn`; defaults to the backend tool name, such as `weasyprint` in the alias above.
+- `nix-package` — query a different NixHub package than the backend tool name. This supports short mise aliases for long nixpkgs attribute paths.
+- `nix-package-output` — select a named NixHub output instead of the output marked as default. For example, Pango’s default is `bin`, while its shared libraries are in `out`.
+- `short-storage-slug` — directory name beneath `$HOME/.tn`; defaults to the backend tool name, such as `weasyprint` in the alias above.
+
+The backend uses the CLI's default worker count and always permits replacement when mise requests an installation. Mise is responsible for deciding whether an installation is fresh.
 
 ## Relocated layout
 
@@ -80,11 +82,11 @@ The mise installation path is a symlink to that persistent root:
 Dependencies are sorted by complete source store basename and assigned deterministic, zero-padded hexadecimal counters. The counter width is computed before any archive is downloaded:
 
 ```text
-counter width = 38 - byte_length($HOME/.tn/<install-prefix>/<resolved-version>)
+counter width = 38 - byte_length($HOME/.tn/<short-storage-slug>/<resolved-version>)
 capacity      = 16 ** counter_width
 ```
 
-For example, `/Users/igor/.tn/nodejs/24.11.1` is 30 bytes, producing eight-digit counters. The absolute root may be at most 37 bytes; a longer `install_prefix` is rejected before closure discovery. Installation also fails if the resulting counter cannot represent the closure.
+For example, `/Users/igor/.tn/nodejs/24.11.1` is 30 bytes, producing eight-digit counters. The absolute root may be at most 37 bytes; a longer `short-storage-slug` is rejected before closure discovery. Installation also fails if the resulting counter cannot represent the closure.
 
 Every replacement has exactly the same byte length as its original store path:
 
@@ -104,8 +106,7 @@ The root package may not already contain a `.tn` entry because that name is rese
 Remove one explicitly with the internal CLI boundary:
 
 ```sh
-/path/to/plugin/bin/trans-nix remove nodejs 24.11.1 \
-  --platform aarch64-darwin
+/path/to/plugin/bin/trans-nix remove nodejs 24.11.1 aarch64-darwin
 ```
 
 This can leave dangling mise links, so normally run it after `mise uninstall`.

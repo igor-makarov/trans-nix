@@ -2,7 +2,7 @@
 """Install relocatable nixpkgs closures without Nix.
 
 Package metadata comes from NixHub and NARs come directly from the Nix binary
-cache. A root is installed at ``$HOME/.tn/<package>/<version>`` and its
+cache. A root is installed at ``$HOME/.tn/<short-storage-slug>/<version>`` and its
 dependencies live beneath ``<root>/.tn``. Mise installation directories are
 symlinks to those roots. Every store-path rewrite preserves its original byte
 length, including strings in binaries, compiled data, scripts, and symlinks.
@@ -879,7 +879,7 @@ def combine_stats(total: dict[str, int], part: dict[str, int]) -> None:
 
 def materialize_closure(
     package: str,
-    install_prefix: str,
+    short_storage_slug: str,
     version: str,
     platform: str,
     output_name: str | None,
@@ -964,12 +964,12 @@ def materialize_closure(
                 os.replace(processed_dir / basename, destination)
 
         manifest = {
-            "format": 3,
+            "format": 4,
             "package": package,
-            "installPrefix": install_prefix,
+            "shortStorageSlug": short_storage_slug,
             "version": version,
             "platform": platform,
-            "output": output_name,
+            "nixPackageOutput": output_name,
             "root": root_basename,
             "installRoot": os.fspath(root_path),
             "jobs": worker_count,
@@ -1013,8 +1013,8 @@ def validate_platform(platform: str) -> str:
     return platform
 
 
-def relocated_root(install_prefix: str, version: str) -> Path:
-    install_prefix = validate_segment(install_prefix, "install prefix")
+def relocated_root(short_storage_slug: str, version: str) -> Path:
+    short_storage_slug = validate_segment(short_storage_slug, "short storage slug")
     version = validate_segment(version, "version")
     home = os.environ.get("HOME")
     if not home:
@@ -1022,7 +1022,7 @@ def relocated_root(install_prefix: str, version: str) -> Path:
     home_path = Path(home)
     if not home_path.is_absolute():
         raise DownloadError(f"HOME must be absolute: {home!r}")
-    return home_path / RELOCATED_DIR_NAME / install_prefix / version
+    return home_path / RELOCATED_DIR_NAME / short_storage_slug / version
 
 
 def validate_relocated_root_length(root_path: Path) -> None:
@@ -1045,7 +1045,7 @@ def load_manifest(root_path: Path) -> dict | None:
 def manifest_matches(
     manifest: dict | None,
     package: str,
-    install_prefix: str,
+    short_storage_slug: str,
     version: str,
     platform: str,
     root_basename: str,
@@ -1054,12 +1054,12 @@ def manifest_matches(
 ) -> bool:
     return bool(
         manifest
-        and manifest.get("format") == 3
+        and manifest.get("format") == 4
         and manifest.get("package") == package
-        and manifest.get("installPrefix", manifest.get("package")) == install_prefix
+        and manifest.get("shortStorageSlug") == short_storage_slug
         and manifest.get("version") == version
         and manifest.get("platform") == platform
-        and manifest.get("output") == output_name
+        and manifest.get("nixPackageOutput") == output_name
         and manifest.get("root") == root_basename
         and manifest.get("installRoot") == os.fspath(root_path)
     )
@@ -1114,8 +1114,11 @@ def parse_args() -> argparse.Namespace:
         "list-versions", help="list live indexed versions in ascending order"
     )
     versions.add_argument("package", help="nixpkgs attribute name, e.g. nodejs")
-    versions.add_argument("--platform", required=True, help="indexed Nix system")
-    versions.add_argument("--output", help="named output instead of the NixHub default")
+    versions.add_argument("platform", help="indexed Nix system")
+    versions.add_argument(
+        "--nix-package-output",
+        help="named output instead of the NixHub default",
+    )
     versions.add_argument("--json", action="store_true", help="emit one JSON array")
 
     install = subparsers.add_parser(
@@ -1123,13 +1126,21 @@ def parse_args() -> argparse.Namespace:
     )
     install.add_argument("package", help="nixpkgs attribute name, e.g. nodejs")
     install.add_argument("version", help="exact version, numeric prefix, or latest")
-    install.add_argument("link", type=Path, help="mise installation symlink to create")
-    install.add_argument("--platform", required=True, help="indexed Nix system")
+    install.add_argument("platform", help="indexed Nix system")
     install.add_argument(
-        "--install-prefix",
+        "install_to_path",
+        metavar="install-to-path",
+        type=Path,
+        help="installation symlink path to create",
+    )
+    install.add_argument(
+        "--short-storage-slug",
         help="directory name beneath $HOME/.tn (default: package name)",
     )
-    install.add_argument("--output", help="named output instead of the NixHub default")
+    install.add_argument(
+        "--nix-package-output",
+        help="named output instead of the NixHub default",
+    )
     install.add_argument(
         "--force", action="store_true", help="replace mismatched roots or links"
     )
@@ -1146,12 +1157,14 @@ def parse_args() -> argparse.Namespace:
     )
     remove.add_argument("package", help="nixpkgs attribute name")
     remove.add_argument("version", help="exact resolved version")
-    remove.add_argument("--platform", required=True, help="manifest Nix system")
+    remove.add_argument("platform", help="manifest Nix system")
     remove.add_argument(
-        "--install-prefix",
+        "--short-storage-slug",
         help="directory name beneath $HOME/.tn (default: package name)",
     )
-    remove.add_argument("--output", help="named output recorded in the manifest")
+    remove.add_argument(
+        "--nix-package-output", help="named output recorded in the manifest"
+    )
     remove.add_argument(
         "--force", action="store_true", help="remove even if the manifest mismatches"
     )
@@ -1162,8 +1175,8 @@ def run_list_versions(args: argparse.Namespace) -> int:
     validate_segment(args.package, "package name")
     platform = validate_platform(args.platform)
     output_name = (
-        validate_segment(args.output, "output name")
-        if args.output is not None
+        validate_segment(args.nix_package_output, "Nix package output")
+        if args.nix_package_output is not None
         else None
     )
     versions = list_package_versions(args.package, platform, output_name)
@@ -1176,24 +1189,24 @@ def run_list_versions(args: argparse.Namespace) -> int:
 
 def run_install(args: argparse.Namespace) -> int:
     validate_segment(args.package, "package name")
-    install_prefix = validate_segment(
-        args.install_prefix or args.package, "install prefix"
+    short_storage_slug = validate_segment(
+        args.short_storage_slug or args.package, "short storage slug"
     )
     platform = validate_platform(args.platform)
     output_name = (
-        validate_segment(args.output, "output name")
-        if args.output is not None
+        validate_segment(args.nix_package_output, "Nix package output")
+        if args.nix_package_output is not None
         else None
     )
     if args.jobs < 1:
         raise DownloadError("--jobs must be at least 1")
 
-    link = Path(os.path.abspath(os.path.expanduser(args.link)))
-    if link == Path("/"):
-        raise DownloadError("refusing to use the filesystem root as a mise link")
+    install_to_path = Path(os.path.abspath(os.path.expanduser(args.install_to_path)))
+    if install_to_path == Path("/"):
+        raise DownloadError("refusing to install to the filesystem root")
 
     version, digest = resolve_package(args.package, args.version, platform, output_name)
-    root_path = relocated_root(install_prefix, version)
+    root_path = relocated_root(short_storage_slug, version)
     validate_relocated_root_length(root_path)
     root_path.parent.mkdir(parents=True, exist_ok=True)
     output_label = output_name or "default"
@@ -1209,15 +1222,15 @@ def run_install(args: argparse.Namespace) -> int:
         if manifest_matches(
             manifest,
             args.package,
-            install_prefix,
+            short_storage_slug,
             version,
             platform,
             root_basename,
             root_path,
             output_name,
         ):
-            install_link(link, root_path, args.force)
-            print(link)
+            install_link(install_to_path, root_path, args.force)
+            print(install_to_path)
             eprint(f"reused: {root_path}")
             return 0
         if not args.force:
@@ -1228,7 +1241,7 @@ def run_install(args: argparse.Namespace) -> int:
 
     count, downloaded_bytes, stats = materialize_closure(
         args.package,
-        install_prefix,
+        short_storage_slug,
         version,
         platform,
         output_name,
@@ -1238,9 +1251,9 @@ def run_install(args: argparse.Namespace) -> int:
         force=args.force,
         jobs=args.jobs,
     )
-    install_link(link, root_path, args.force)
+    install_link(install_to_path, root_path, args.force)
 
-    print(link)
+    print(install_to_path)
     eprint(
         f"complete: {count} paths, {human_size(downloaded_bytes)} downloaded, "
         f"{stats['exactRewrites']} store-path rewrites, "
@@ -1251,26 +1264,26 @@ def run_install(args: argparse.Namespace) -> int:
 
 def run_remove(args: argparse.Namespace) -> int:
     platform = validate_platform(args.platform)
-    install_prefix = validate_segment(
-        args.install_prefix or args.package, "install prefix"
+    short_storage_slug = validate_segment(
+        args.short_storage_slug or args.package, "short storage slug"
     )
     output_name = (
-        validate_segment(args.output, "output name")
-        if args.output is not None
+        validate_segment(args.nix_package_output, "Nix package output")
+        if args.nix_package_output is not None
         else None
     )
-    root_path = relocated_root(install_prefix, args.version)
+    root_path = relocated_root(short_storage_slug, args.version)
     if not path_lexists(root_path):
         raise DownloadError(f"relocated root does not exist: {root_path}")
     manifest = load_manifest(root_path)
     matches = bool(
         manifest
-        and manifest.get("format") == 3
+        and manifest.get("format") == 4
         and manifest.get("package") == args.package
-        and manifest.get("installPrefix", manifest.get("package")) == install_prefix
+        and manifest.get("shortStorageSlug") == short_storage_slug
         and manifest.get("version") == args.version
         and manifest.get("platform") == platform
-        and manifest.get("output") == output_name
+        and manifest.get("nixPackageOutput") == output_name
         and manifest.get("installRoot") == os.fspath(root_path)
     )
     if not matches and not args.force:

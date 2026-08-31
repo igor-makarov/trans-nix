@@ -256,19 +256,19 @@ class RelocationTests(unittest.TestCase):
 
 
 class InstallRootTests(unittest.TestCase):
-    def test_relocated_root_mirrors_install_prefix_and_version(self):
+    def test_relocated_root_mirrors_short_storage_slug_and_version(self):
         with mock.patch.dict(os.environ, {"HOME": "/home/tester"}):
             self.assertEqual(
                 trans_nix.relocated_root("nodejs", "24.14.0"),
                 Path("/home/tester/.tn/nodejs/24.14.0"),
             )
 
-    def test_install_prefix_can_differ_from_nixhub_package(self):
+    def test_short_storage_slug_can_differ_from_nixhub_package(self):
         root = Path("/home/test/.tn/weasyprint/69.0")
         manifest = {
-            "format": 3,
+            "format": 4,
             "package": "python314Packages.weasyprint",
-            "installPrefix": "weasyprint",
+            "shortStorageSlug": "weasyprint",
             "version": "69.0",
             "platform": "aarch64-linux",
             "root": "1" * 32 + "-python3.14-weasyprint-69.0",
@@ -286,7 +286,7 @@ class InstallRootTests(unittest.TestCase):
             )
         )
 
-    def test_install_prefix_that_makes_root_too_long_is_rejected(self):
+    def test_short_storage_slug_that_makes_root_too_long_is_rejected(self):
         with mock.patch.dict(os.environ, {"HOME": "/home/tester"}):
             root = trans_nix.relocated_root("x" * 30, "1.0")
         with self.assertRaisesRegex(trans_nix.DownloadError, "maximum is 37 bytes"):
@@ -312,8 +312,9 @@ class InstallRootTests(unittest.TestCase):
             root = home / ".tn" / "nodejs" / "24.14.0"
             root.mkdir(parents=True)
             manifest = {
-                "format": 3,
+                "format": 4,
                 "package": "nodejs",
+                "shortStorageSlug": "nodejs",
                 "version": "24.14.0",
                 "platform": "aarch64-darwin",
                 "root": root_basename,
@@ -322,12 +323,12 @@ class InstallRootTests(unittest.TestCase):
             (root / trans_nix.MANIFEST_NAME).write_text(json.dumps(manifest))
             args = mock.Mock(
                 package="nodejs",
-                install_prefix=None,
+                short_storage_slug=None,
                 version="24",
                 platform="aarch64-darwin",
-                output=None,
+                nix_package_output=None,
                 jobs=4,
-                link=home / "mise" / "24.14.0",
+                install_to_path=home / "mise" / "24.14.0",
                 force=False,
             )
             with (
@@ -347,14 +348,15 @@ class InstallRootTests(unittest.TestCase):
                 contextlib.redirect_stderr(io.StringIO()),
             ):
                 self.assertEqual(trans_nix.run_install(args), 0)
-            self.assertTrue(args.link.is_symlink())
-            self.assertEqual(Path(os.readlink(args.link)), root)
+            self.assertTrue(args.install_to_path.is_symlink())
+            self.assertEqual(Path(os.readlink(args.install_to_path)), root)
 
     def test_manifest_match_includes_platform_and_source_root(self):
         root = Path("/home/test/.tn/nodejs/24.14.0")
         manifest = {
-            "format": 3,
+            "format": 4,
             "package": "nodejs",
+            "shortStorageSlug": "nodejs",
             "version": "24.14.0",
             "platform": "aarch64-linux",
             "root": "1" * 32 + "-nodejs-24.14.0",

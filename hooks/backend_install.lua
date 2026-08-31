@@ -13,41 +13,32 @@ function PLUGIN:BackendInstall(ctx)
     end
 
     local options = ctx.options or {}
-    local jobs = options.jobs or 16
-    if type(jobs) ~= "number" or jobs < 1 or jobs % 1 ~= 0 then
-        error("trans-nix option 'jobs' must be a positive integer")
+    local nix_package = options["nix-package"]
+    local nix_package_output = options["nix-package-output"]
+    local short_storage_slug = options["short-storage-slug"]
+    if nix_package ~= nil and (type(nix_package) ~= "string" or nix_package == "") then
+        error("trans-nix option 'nix-package' must be a non-empty string")
     end
-    if options.force ~= nil and type(options.force) ~= "boolean" then
-        error("trans-nix option 'force' must be a boolean")
+    if nix_package_output ~= nil and (type(nix_package_output) ~= "string" or nix_package_output == "") then
+        error("trans-nix option 'nix-package-output' must be a non-empty string")
     end
-    if options.output ~= nil and (type(options.output) ~= "string" or options.output == "") then
-        error("trans-nix option 'output' must be a non-empty string")
-    end
-    if options.package ~= nil and (type(options.package) ~= "string" or options.package == "") then
-        error("trans-nix option 'package' must be a non-empty string")
-    end
-    if options.install_prefix ~= nil and (type(options.install_prefix) ~= "string" or options.install_prefix == "") then
-        error("trans-nix option 'install_prefix' must be a non-empty string")
+    if short_storage_slug ~= nil and (type(short_storage_slug) ~= "string" or short_storage_slug == "") then
+        error("trans-nix option 'short-storage-slug' must be a non-empty string")
     end
     local trans_nix = require("lib.trans_nix")
     local args = {
         "install",
-        options.package or ctx.tool,
+        nix_package or ctx.tool,
         ctx.version,
-        ctx.install_path,
-        "--platform",
         trans_nix.platform(),
-        "--install-prefix",
-        options.install_prefix or ctx.tool,
-        "--jobs",
-        tostring(jobs),
+        ctx.install_path,
+        "--short-storage-slug",
+        short_storage_slug or ctx.tool,
+        "--force",
     }
-    if options.output then
-        table.insert(args, "--output")
-        table.insert(args, options.output)
-    end
-    if options.force then
-        table.insert(args, "--force")
+    if nix_package_output then
+        table.insert(args, "--nix-package-output")
+        table.insert(args, nix_package_output)
     end
     trans_nix.exec(args)
     return {}

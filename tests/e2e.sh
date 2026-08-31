@@ -47,7 +47,7 @@ mise plugin link --force trans-nix "$repo_dir"
 # and exposes it to the backend hook; no per-tool depends option is configured.
 mise install
 mise reshim
-cli_versions=$("$repo_dir/bin/trans-nix" list-versions nodejs --platform "$platform" --json)
+cli_versions=$("$repo_dir/bin/trans-nix" list-versions nodejs "$platform" --json)
 [[ $cli_versions == \[* ]]
 versions=$(mise ls-remote trans-nix:nodejs)
 [[ -n $versions ]]
@@ -81,7 +81,7 @@ EOF
     [[ $(readlink "$install_path") == "$expected" ]]
     [[ -f $expected/.nix-closure-manifest.json ]]
     [[ -d $expected/.tn ]]
-    grep -q '"format": 3' "$expected/.nix-closure-manifest.json"
+    grep -q '"format": 4' "$expected/.nix-closure-manifest.json"
     grep -q "\"platform\": \"$platform\"" "$expected/.nix-closure-manifest.json"
     grep -Eq '"exactRewrites": [1-9][0-9]*' "$expected/.nix-closure-manifest.json"
 
@@ -100,7 +100,7 @@ experimental = true
 
 [tools]
 python = "3.14"
-"trans-nix:pango" = { version = "$version", output = "out" }
+"trans-nix:pango" = { version = "$version", nix-package-output = "out" }
 EOF
     mise install "trans-nix:pango@$version"
     install_path=$(mise where "trans-nix:pango@$version")
@@ -110,9 +110,9 @@ EOF
     [[ $(readlink "$install_path") == "$expected" ]]
     [[ -f $expected/.nix-closure-manifest.json ]]
     [[ -d $expected/.tn ]]
-    grep -q '"format": 3' "$expected/.nix-closure-manifest.json"
+    grep -q '"format": 4' "$expected/.nix-closure-manifest.json"
     grep -q "\"platform\": \"$platform\"" "$expected/.nix-closure-manifest.json"
-    grep -q '"output": "out"' "$expected/.nix-closure-manifest.json"
+    grep -q '"nixPackageOutput": "out"' "$expected/.nix-closure-manifest.json"
     grep -Eq '"exactRewrites": [1-9][0-9]*' "$expected/.nix-closure-manifest.json"
 
     library=$(find "$install_path/lib" -maxdepth 1 -name 'libpango-1.0*' -print -quit)
@@ -139,7 +139,7 @@ verify_weasyprint() {
 experimental = true
 
 [tool_alias]
-weasyprint = "trans-nix:weasyprint[package='python314Packages.weasyprint']"
+weasyprint = "trans-nix:weasyprint[nix-package='python314Packages.weasyprint']"
 
 [tools]
 python = "3.14"
@@ -155,7 +155,7 @@ EOF
     [[ $(readlink "$install_path") == "$expected" ]]
     [[ -f $expected/.nix-closure-manifest.json ]]
     grep -q '"package": "python314Packages.weasyprint"' "$expected/.nix-closure-manifest.json"
-    grep -q '"installPrefix": "weasyprint"' "$expected/.nix-closure-manifest.json"
+    grep -q '"shortStorageSlug": "weasyprint"' "$expected/.nix-closure-manifest.json"
     grep -q "\"platform\": \"$platform\"" "$expected/.nix-closure-manifest.json"
 
     output=$("$install_path/bin/weasyprint" --version)
@@ -175,7 +175,7 @@ experimental = true
 
 [tools]
 python = "3.14"
-"trans-nix:weasyprint[package='python314Packages.weasyprint']" = "latest"
+"trans-nix:weasyprint[nix-package='python314Packages.weasyprint']" = "latest"
 EOF
     mise install
     direct_install_path=$(mise where "trans-nix:weasyprint@$version")

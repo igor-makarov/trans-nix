@@ -7,24 +7,25 @@ function PLUGIN:BackendListVersions(ctx)
     end
 
     local options = ctx.options or {}
-    if options.output ~= nil and (type(options.output) ~= "string" or options.output == "") then
-        error("trans-nix option 'output' must be a non-empty string")
+    local nix_package = options["nix-package"]
+    local nix_package_output = options["nix-package-output"]
+    if nix_package ~= nil and (type(nix_package) ~= "string" or nix_package == "") then
+        error("trans-nix option 'nix-package' must be a non-empty string")
     end
-    if options.package ~= nil and (type(options.package) ~= "string" or options.package == "") then
-        error("trans-nix option 'package' must be a non-empty string")
+    if nix_package_output ~= nil and (type(nix_package_output) ~= "string" or nix_package_output == "") then
+        error("trans-nix option 'nix-package-output' must be a non-empty string")
     end
     local json = require("json")
     local trans_nix = require("lib.trans_nix")
     local args = {
         "list-versions",
-        options.package or ctx.tool,
-        "--platform",
+        nix_package or ctx.tool,
         trans_nix.platform(),
         "--json",
     }
-    if options.output then
-        table.insert(args, "--output")
-        table.insert(args, options.output)
+    if nix_package_output then
+        table.insert(args, "--nix-package-output")
+        table.insert(args, nix_package_output)
     end
     local output = trans_nix.exec(args)
     return { versions = json.decode(output) }
