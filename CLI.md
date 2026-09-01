@@ -1,6 +1,6 @@
 # CLI boundary
 
-The Python implementation is encapsulated in `bin/trans-nix`. It is primarily the boundary used by the Lua plugin hooks, not a separately installed global command.
+`bin/trans-nix` is the stable executable used by the Lua plugin hooks, not a separately installed global command. It only bootstraps the implementation under `trans_nix/`, where parsing, command handling, transport, and transformation logic are split by concern.
 
 ```sh
 # Ascending live versions

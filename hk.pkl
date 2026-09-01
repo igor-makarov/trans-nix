@@ -16,14 +16,14 @@ local linters = new Mapping<String, Step> {
         check = "actionlint {{files}}"
     }
     ["ruff-check"] {
-        glob = "{bin/trans-nix,tests/**/*.py}"
-        check = "ruff check bin/trans-nix tests/"
-        fix = "ruff check --fix bin/trans-nix tests/"
+        glob = "{bin/trans-nix,trans_nix/**/*.py,tests/**/*.py}"
+        check = "ruff check bin/trans-nix trans_nix/ tests/"
+        fix = "ruff check --fix bin/trans-nix trans_nix/ tests/"
     }
     ["ruff-format"] {
-        glob = "{bin/trans-nix,tests/**/*.py}"
-        check = "ruff format --check bin/trans-nix tests/"
-        fix = "ruff format bin/trans-nix tests/"
+        glob = "{bin/trans-nix,trans_nix/**/*.py,tests/**/*.py}"
+        check = "ruff format --check bin/trans-nix trans_nix/ tests/"
+        fix = "ruff format bin/trans-nix trans_nix/ tests/"
     }
     ["shellcheck"] {
         glob = "**/*.sh"

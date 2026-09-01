@@ -195,5 +195,6 @@ verify_weasyprint
 
 python_path=$(mise where python@3.14)
 "$python_path/bin/python3" --version
-python3 -m unittest discover -s "$repo_dir/tests" -v
+PYTHONPATH="$repo_dir${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 -m unittest discover -s "$repo_dir/tests" -v
 printf 'trans-nix E2E passed on %s\n' "$platform"

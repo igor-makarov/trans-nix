@@ -16,8 +16,8 @@ stylua = "latest"
 description = "Format Lua and Python sources"
 run = [
   "stylua metadata.lua hooks/ lib/",
-  "ruff format bin/trans-nix tests/",
-  "ruff check --fix bin/trans-nix tests/",
+  "ruff format bin/trans-nix trans_nix/ tests/",
+  "ruff check --fix bin/trans-nix trans_nix/ tests/",
 ]
 
 [tasks.lint]

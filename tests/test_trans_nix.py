@@ -1,7 +1,5 @@
 import contextlib
 import hashlib
-import importlib.machinery
-import importlib.util
 import io
 import json
 import os
@@ -11,12 +9,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-ROOT = Path(__file__).resolve().parents[1]
-LOADER = importlib.machinery.SourceFileLoader("trans_nix", str(ROOT / "bin/trans-nix"))
-SPEC = importlib.util.spec_from_loader(LOADER.name, LOADER)
-assert SPEC is not None
-trans_nix = importlib.util.module_from_spec(SPEC)
-LOADER.exec_module(trans_nix)
+from trans_nix import commands, errors, hashes, relocation, roots, settings
+from trans_nix import nar as nar_format
+from trans_nix import versions as versioning
 
 
 def blob(data):
@@ -33,7 +28,7 @@ def regular_nar(data, executable=False):
 
 def nar_hash(data):
     digest = hashlib.sha256(data).digest()
-    return "sha256:" + trans_nix.nix_base32(digest)
+    return "sha256:" + hashes.nix_base32(digest)
 
 
 class VersionTests(unittest.TestCase):
@@ -58,9 +53,9 @@ class VersionTests(unittest.TestCase):
             "24.14.0",
             "25.0.0-beta1",
         ]
-        self.assertEqual(trans_nix.resolve_version(versions, "24"), "24.14.0")
-        self.assertEqual(trans_nix.resolve_version(versions, "latest"), "24.14.0")
-        self.assertEqual(trans_nix.resolve_version(versions, "24.1.0"), "24.1.0")
+        self.assertEqual(versioning.resolve_version(versions, "24"), "24.14.0")
+        self.assertEqual(versioning.resolve_version(versions, "latest"), "24.14.0")
+        self.assertEqual(versioning.resolve_version(versions, "24.1.0"), "24.1.0")
 
     def test_version_listing_filters_by_platform_and_default_output(self):
         metadata = {
@@ -80,9 +75,11 @@ class VersionTests(unittest.TestCase):
                 {"version": "malformed", "platforms": "not-a-list"},
             ],
         }
-        with mock.patch.object(trans_nix, "fetch_json", return_value=metadata) as fetch:
+        with mock.patch.object(
+            versioning, "fetch_json", return_value=metadata
+        ) as fetch:
             self.assertEqual(
-                trans_nix.list_package_versions("demo", "x86_64-linux"),
+                versioning.list_package_versions("demo", "x86_64-linux"),
                 ["1.2.0", "1.10.0", "2.0.0"],
             )
         fetch.assert_called_once_with("https://search.devbox.sh/v2/pkg?name=demo")
@@ -106,9 +103,11 @@ class VersionTests(unittest.TestCase):
                 },
             ],
         }
-        with mock.patch.object(trans_nix, "fetch_json", return_value=metadata) as fetch:
+        with mock.patch.object(
+            versioning, "fetch_json", return_value=metadata
+        ) as fetch:
             self.assertEqual(
-                trans_nix.resolve_package("demo", "24.14", "aarch64-darwin"),
+                versioning.resolve_package("demo", "24.14", "aarch64-darwin"),
                 ("24.14.1", "2" * 32),
             )
         fetch.assert_called_once_with("https://search.devbox.sh/v2/pkg?name=demo")
@@ -121,16 +120,16 @@ class VersionTests(unittest.TestCase):
             ],
         }
         with (
-            mock.patch.object(trans_nix, "fetch_json", return_value=metadata),
-            self.assertRaisesRegex(trans_nix.DownloadError, "no installable versions"),
+            mock.patch.object(versioning, "fetch_json", return_value=metadata),
+            self.assertRaisesRegex(errors.DownloadError, "no installable versions"),
         ):
-            trans_nix.resolve_package("demo", "1", "aarch64-linux")
+            versioning.resolve_package("demo", "1", "aarch64-linux")
 
     def test_default_output_must_be_unique(self):
         system = self.system()
         system["outputs"].append(dict(system["outputs"][0]))
-        with self.assertRaisesRegex(trans_nix.DownloadError, "2 default outputs"):
-            trans_nix.nixhub_store_path(system, "demo", None)
+        with self.assertRaisesRegex(errors.DownloadError, "2 default outputs"):
+            versioning.nixhub_store_path(system, "demo", None)
 
     def test_named_output_is_selected(self):
         system = self.system()
@@ -141,14 +140,14 @@ class VersionTests(unittest.TestCase):
             }
         )
         self.assertEqual(
-            trans_nix.nixhub_store_path(system, "demo", "lib"),
+            versioning.nixhub_store_path(system, "demo", "lib"),
             "/nix/store/" + "2" * 32 + "-demo-lib",
         )
 
     def test_default_output_store_path_is_validated(self):
         system = self.system(path="/tmp/not-the-store")
-        with self.assertRaisesRegex(trans_nix.DownloadError, "invalid store path"):
-            trans_nix.nixhub_store_path(system, "demo", None)
+        with self.assertRaisesRegex(errors.DownloadError, "invalid store path"):
+            versioning.nixhub_store_path(system, "demo", None)
 
 
 class RelocationTests(unittest.TestCase):
@@ -161,7 +160,7 @@ class RelocationTests(unittest.TestCase):
         infos = {name: {} for name in [root_basename, *reversed(dependencies)]}
         root = Path("/Users/igor/.tn/nodejs/24.14.0")
 
-        exact, destinations, width = trans_nix.build_relocations(
+        exact, destinations, width = relocation.build_relocations(
             root_basename, infos, root
         )
 
@@ -183,11 +182,11 @@ class RelocationTests(unittest.TestCase):
         dependencies = [f"{i:032d}-dep" for i in range(1, 18)]
         infos = {name: {} for name in [root_basename, *dependencies]}
         root = Path("/" + "r" * 36)  # 37 bytes: one hexadecimal counter digit
-        with self.assertRaisesRegex(trans_nix.DownloadError, "closure has 17"):
-            trans_nix.build_relocations(root_basename, infos, root)
+        with self.assertRaisesRegex(errors.DownloadError, "closure has 17"):
+            relocation.build_relocations(root_basename, infos, root)
 
     def test_root_references_are_padded_with_separators(self):
-        rewritten = trans_nix.padded_root_path(b"/short/root", 20)
+        rewritten = relocation.padded_root_path(b"/short/root", 20)
         self.assertEqual(len(rewritten), 20)
         self.assertEqual(rewritten.rstrip(b"/"), b"/short/root")
 
@@ -199,7 +198,7 @@ class RelocationTests(unittest.TestCase):
         suffix = b"/libg_base64_decode_inplace"
         self.assertEqual(len(canonical), len(destination))
 
-        rewritten, count = trans_nix.rewrite_store_paths(
+        rewritten, count = relocation.rewrite_store_paths(
             alternate + suffix, {canonical: destination}
         )
 
@@ -216,8 +215,8 @@ class RelocationTests(unittest.TestCase):
         short_alias = b"/nix/store/" + digest + b"-x"
         self.assertEqual(len(canonical), len(destination))
 
-        with self.assertRaisesRegex(trans_nix.DownloadError, "too long"):
-            trans_nix.rewrite_store_paths(short_alias, {canonical: destination})
+        with self.assertRaisesRegex(errors.DownloadError, "too long"):
+            relocation.rewrite_store_paths(short_alias, {canonical: destination})
 
     def test_streamed_nar_extraction_rewrites_binary_data(self):
         old = b"/nix/store/" + b"1" * 32 + b"-dependency"
@@ -228,7 +227,7 @@ class RelocationTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             destination = Path(temporary) / "program"
-            extractor = trans_nix.NarExtractor(
+            extractor = nar_format.NarExtractor(
                 io.BytesIO(nar), nar_hash(nar), {old: new}
             )
             digest, size = extractor.extract(destination)
@@ -240,8 +239,8 @@ class RelocationTests(unittest.TestCase):
 
     def test_reference_outside_closure_is_rejected(self):
         old = b"/nix/store/" + b"1" * 32 + b"-outside"
-        with self.assertRaisesRegex(trans_nix.DownloadError, "outside the closure"):
-            trans_nix.rewrite_store_paths(old, {})
+        with self.assertRaisesRegex(errors.DownloadError, "outside the closure"):
+            relocation.rewrite_store_paths(old, {})
 
     def test_zstd_uses_python_314_standard_library(self):
         from compression import zstd
@@ -251,7 +250,7 @@ class RelocationTests(unittest.TestCase):
             archive = Path(temporary) / "payload.zst"
             with zstd.open(archive, "wb") as output:
                 output.write(payload)
-            with trans_nix.decompressed(archive, "zstd") as stream:
+            with nar_format.decompressed(archive, "zstd") as stream:
                 self.assertEqual(stream.read(), payload)
 
 
@@ -259,7 +258,7 @@ class InstallRootTests(unittest.TestCase):
     def test_relocated_root_mirrors_short_storage_slug_and_version(self):
         with mock.patch.dict(os.environ, {"HOME": "/home/tester"}):
             self.assertEqual(
-                trans_nix.relocated_root("nodejs", "24.14.0"),
+                roots.relocated_root("nodejs", "24.14.0"),
                 Path("/home/tester/.tn/nodejs/24.14.0"),
             )
 
@@ -275,7 +274,7 @@ class InstallRootTests(unittest.TestCase):
             "installRoot": str(root),
         }
         self.assertTrue(
-            trans_nix.manifest_matches(
+            roots.manifest_matches(
                 manifest,
                 "python314Packages.weasyprint",
                 "weasyprint",
@@ -288,9 +287,9 @@ class InstallRootTests(unittest.TestCase):
 
     def test_short_storage_slug_that_makes_root_too_long_is_rejected(self):
         with mock.patch.dict(os.environ, {"HOME": "/home/tester"}):
-            root = trans_nix.relocated_root("x" * 30, "1.0")
-        with self.assertRaisesRegex(trans_nix.DownloadError, "maximum is 37 bytes"):
-            trans_nix.validate_relocated_root_length(root)
+            root = roots.relocated_root("x" * 30, "1.0")
+        with self.assertRaisesRegex(errors.DownloadError, "maximum is 37 bytes"):
+            roots.validate_relocated_root_length(root)
 
     def test_install_link_replaces_mise_empty_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -300,7 +299,7 @@ class InstallRootTests(unittest.TestCase):
             link = base / "mise" / "nodejs" / "24.14.0"
             link.mkdir(parents=True)
 
-            trans_nix.install_link(link, target, force=False)
+            roots.install_link(link, target, force=False)
 
             self.assertTrue(link.is_symlink())
             self.assertEqual(Path(os.readlink(link)), target)
@@ -320,7 +319,7 @@ class InstallRootTests(unittest.TestCase):
                 "root": root_basename,
                 "installRoot": str(root),
             }
-            (root / trans_nix.MANIFEST_NAME).write_text(json.dumps(manifest))
+            (root / settings.MANIFEST_NAME).write_text(json.dumps(manifest))
             args = mock.Mock(
                 package="nodejs",
                 short_storage_slug=None,
@@ -334,20 +333,20 @@ class InstallRootTests(unittest.TestCase):
             with (
                 mock.patch.dict(os.environ, {"HOME": str(home)}),
                 mock.patch.object(
-                    trans_nix,
+                    commands,
                     "resolve_package",
                     return_value=("24.14.0", "1" * 32),
                 ),
-                mock.patch.object(trans_nix, "validate_relocated_root_length"),
+                mock.patch.object(commands, "validate_relocated_root_length"),
                 mock.patch.object(
-                    trans_nix,
+                    commands,
                     "discover_closure",
                     return_value=(root_basename, {root_basename: {}}),
                 ),
                 contextlib.redirect_stdout(io.StringIO()),
                 contextlib.redirect_stderr(io.StringIO()),
             ):
-                self.assertEqual(trans_nix.run_install(args), 0)
+                self.assertEqual(commands.run_install(args), 0)
             self.assertTrue(args.install_to_path.is_symlink())
             self.assertEqual(Path(os.readlink(args.install_to_path)), root)
 
@@ -363,7 +362,7 @@ class InstallRootTests(unittest.TestCase):
             "installRoot": str(root),
         }
         self.assertTrue(
-            trans_nix.manifest_matches(
+            roots.manifest_matches(
                 manifest,
                 "nodejs",
                 "nodejs",
@@ -376,7 +375,7 @@ class InstallRootTests(unittest.TestCase):
         changed = json.loads(json.dumps(manifest))
         changed["platform"] = "x86_64-linux"
         self.assertFalse(
-            trans_nix.manifest_matches(
+            roots.manifest_matches(
                 changed,
                 "nodejs",
                 "nodejs",
