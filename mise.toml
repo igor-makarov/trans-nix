@@ -1,3 +1,6 @@
+[settings]
+python.uv_venv_auto = "source"
+
 [env]
 MISE_USE_VERSIONS_HOST = "0"
 
@@ -9,6 +12,7 @@ lua-language-server = "latest"
 pkl = "latest"
 python = "3.14"
 ruff = "latest"
+uv = "latest"
 shellcheck = "latest"
 stylua = "latest"
 
@@ -26,7 +30,7 @@ run = "hk check"
 
 [tasks."test:unit"]
 description = "Run offline Python unit tests"
-run = "python3 -m unittest discover -s tests -v"
+run = "uv run --locked python3 -m unittest discover -s tests -v"
 
 [tasks."test:e2e"]
 description = "Install and execute Node.js natively without Nix"

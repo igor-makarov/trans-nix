@@ -1,0 +1,8 @@
+[project]
+name = "trans-nix"
+version = "0.0.0"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = ["hypothesis>=6,<7", "macholib>=1,<2"]
