@@ -61,7 +61,7 @@ def validate_relocated_root_length(root_path: Path) -> None:
 def load_manifest(root_path: Path) -> dict | None:
     try:
         value = json.loads((root_path / MANIFEST_NAME).read_text())
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return None
     return value if isinstance(value, dict) else None
 
