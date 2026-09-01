@@ -73,6 +73,8 @@ class HashingReader:
 
 class NarExtractor:
     def __init__(self, source: BinaryIO, hash_spec: str, exact: dict[bytes, bytes]):
+        if not exact:
+            raise ValueError("relocation map must not be empty")
         self.reader = HashingReader(source, hash_spec)
         self.exact = exact
         self.by_digest = relocation_destinations_by_digest(exact)
@@ -246,10 +248,50 @@ def extract_archive(
 
 
 def is_macho(path: Path) -> bool:
+    """Recognize structurally plausible thin and fat Mach-O files."""
     if path.is_symlink() or not path.is_file():
         return False
     with path.open("rb") as stream:
-        return stream.read(4) in MACHO_MAGICS
+        stream.seek(0, os.SEEK_END)
+        file_size = stream.tell()
+        stream.seek(0)
+        magic = stream.read(4)
+        if magic not in MACHO_MAGICS:
+            return False
+
+        thin_layouts = {
+            b"\xfe\xed\xfa\xce": (">", 28),
+            b"\xce\xfa\xed\xfe": ("<", 28),
+            b"\xfe\xed\xfa\xcf": (">", 32),
+            b"\xcf\xfa\xed\xfe": ("<", 32),
+        }
+        if magic in thin_layouts:
+            endian, header_size = thin_layouts[magic]
+            stream.seek(0)
+            header = stream.read(header_size)
+            if len(header) != header_size:
+                return False
+            sizeofcmds = struct.unpack_from(f"{endian}I", header, 20)[0]
+            return sizeofcmds <= file_size - header_size
+
+        is_64_bit = magic == b"\xca\xfe\xba\xbf"
+        entry_format = ">iiQQII" if is_64_bit else ">iiIII"
+        entry_size = struct.calcsize(entry_format)
+        count_data = stream.read(4)
+        if len(count_data) != 4:
+            return False
+        count = struct.unpack(">I", count_data)[0]
+        if count == 0 or count > (file_size - 8) // entry_size:
+            return False
+        for _ in range(count):
+            entry = stream.read(entry_size)
+            if len(entry) != entry_size:
+                return False
+            fields = struct.unpack(entry_format, entry)
+            offset, size = fields[2:4]
+            if size == 0 or offset > file_size or size > file_size - offset:
+                return False
+        return True
 
 
 def resign_machos(paths: list[Path], platform: str) -> int:
