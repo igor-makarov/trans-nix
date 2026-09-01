@@ -20,8 +20,8 @@ stylua = "latest"
 description = "Format Lua and Python sources"
 run = [
   "stylua metadata.lua hooks/ lib/",
-  "ruff format bin/trans-nix trans_nix/ tests/",
-  "ruff check --fix bin/trans-nix trans_nix/ tests/",
+  "ruff format bin/trans-nix trans_nix/ tests/ e2e/",
+  "ruff check --fix bin/trans-nix trans_nix/ tests/ e2e/",
 ]
 
 [tasks.lint]
@@ -33,12 +33,12 @@ description = "Run offline Python unit tests"
 run = "uv run --locked python3 -m unittest discover -s tests -v"
 
 [tasks."test:e2e"]
-description = "Install and execute Node.js natively without Nix"
-run = "tests/e2e.sh"
+description = "Run each E2E test in a separate macOS Seatbelt sandbox"
+run = "python3 e2e/run.py native"
 
 [tasks."test:linux"]
-description = "Run the Node.js E2E suite in the Linux Docker image"
-run = "tests/docker.sh"
+description = "Run each E2E test in a separate ephemeral Linux container"
+run = "python3 e2e/run.py docker"
 
 [tasks."test:all"]
 description = "Run local native and Docker verification"
