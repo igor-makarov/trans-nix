@@ -117,13 +117,12 @@ The internal command is documented in [CLI.md](CLI.md).
 
 For every closure member, trans-nix verifies:
 
-- downloaded archive size and `FileHash`;
 - decompressed NAR size and `NarHash`;
 - narinfo store digest and reference basenames;
 - that every encountered store reference belongs to the discovered closure;
 - exact byte-length preservation for every rewrite.
 
-Binary-cache signatures are not independently verified. The hashes come from narinfo served by `cache.nixos.org`, so HTTPS trust in that endpoint remains part of the security model.
+The compressed `FileSize` and `FileHash` are not validity checks because a cache may recompress an unchanged NAR without updating those transport fields. Binary-cache signatures are not independently verified. The NAR hashes come from narinfo served by `cache.nixos.org`, so HTTPS trust in that endpoint remains part of the security model.
 
 ## Acknowledgments
 

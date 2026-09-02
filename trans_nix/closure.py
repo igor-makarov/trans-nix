@@ -108,7 +108,7 @@ def process_closure_path(
     destination = processed_dir / basename
     archive_url = urllib.parse.urljoin(CACHE_BASE + "/", narinfo["URL"])
     try:
-        downloaded_bytes = download_archive(archive_url, archive, narinfo)
+        downloaded_bytes = download_archive(archive_url, archive)
         stats = extract_archive(archive, destination, narinfo, exact, platform)
     finally:
         archive.unlink(missing_ok=True)

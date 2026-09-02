@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from .errors import DownloadError
-from .hashes import check_hash, new_hasher
 from .network import fetch_bytes, request
 from .settings import CACHE_BASE
 
@@ -28,8 +27,6 @@ def parse_narinfo(data: bytes, url: str) -> dict[str, str]:
         "StorePath",
         "URL",
         "Compression",
-        "FileHash",
-        "FileSize",
         "NarHash",
         "NarSize",
     }
@@ -44,18 +41,10 @@ def fetch_narinfo(digest: str) -> dict[str, str]:
     return parse_narinfo(fetch_bytes(url), url)
 
 
-def download_archive(url: str, destination: Path, narinfo: dict[str, str]) -> int:
-    expected_size = int(narinfo["FileSize"])
-    hasher = new_hasher(narinfo["FileHash"], "file")
+def download_archive(url: str, destination: Path) -> int:
     size = 0
     with request(url) as response, destination.open("wb") as output:
         while chunk := response.read(1024 * 1024):
             output.write(chunk)
-            hasher.update(chunk)
             size += len(chunk)
-    if size != expected_size:
-        raise DownloadError(
-            f"archive size mismatch: expected {expected_size}, downloaded {size}"
-        )
-    check_hash(narinfo["FileHash"], hasher.digest(), "archive")
     return size

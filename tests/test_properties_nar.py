@@ -99,6 +99,32 @@ class NarProperties(unittest.TestCase):
             self.assertEqual(bool(os.stat(destination).st_mode & 0o100), executable)
 
     @PBT
+    @given(payload=st.binary(max_size=8192), executable=st.booleans())
+    def test_archive_validity_uses_decompressed_nar_size_and_hash(
+        self, payload, executable
+    ):
+        encoded = regular_nar(payload, executable)
+        narinfo = {
+            "Compression": "none",
+            "NarSize": str(len(encoded)),
+            "NarHash": hash_spec(encoded),
+            "FileSize": "stale-compressed-size",
+            "FileHash": "sha256:stale-compressed-hash",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "archive"
+            destination = root / "payload"
+            archive.write_bytes(encoded)
+
+            nar_format.extract_archive(
+                archive, destination, narinfo, NOOP_EXACT, "x86_64-linux"
+            )
+
+            self.assertEqual(destination.read_bytes(), payload)
+            self.assertEqual(bool(os.stat(destination).st_mode & 0o100), executable)
+
+    @PBT
     @given(payload=st.binary(max_size=8192))
     def test_empty_relocation_map_is_rejected_explicitly(self, payload):
         encoded = regular_nar(payload, executable=False)

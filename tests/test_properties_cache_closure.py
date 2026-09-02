@@ -1,4 +1,3 @@
-import hashlib
 import io
 import unittest
 from pathlib import Path
@@ -8,7 +7,7 @@ from hypothesis import given
 from hypothesis import settings as hypothesis_settings
 from hypothesis import strategies as st
 
-from trans_nix import cache, closure, errors, hashes, settings
+from trans_nix import cache, closure, errors, settings
 
 PBT = hypothesis_settings(max_examples=40, deadline=None)
 NIX32 = settings.NIX32_ALPHABET
@@ -20,8 +19,6 @@ REQUIRED_FIELDS = (
     "StorePath",
     "URL",
     "Compression",
-    "FileHash",
-    "FileSize",
     "NarHash",
     "NarSize",
 )
@@ -34,7 +31,7 @@ class NonClosingBytesIO(io.BytesIO):
 
 class CacheProperties(unittest.TestCase):
     @PBT
-    @given(values=st.lists(FIELD_VALUES, min_size=7, max_size=7))
+    @given(values=st.lists(FIELD_VALUES, min_size=5, max_size=5))
     def test_narinfo_parser_preserves_all_required_field_values(self, values):
         expected = dict(zip(REQUIRED_FIELDS, values, strict=True))
         encoded = "\n".join(
@@ -54,22 +51,17 @@ class CacheProperties(unittest.TestCase):
 
     @PBT
     @given(payload=st.binary(max_size=64 * 1024), chunk_size=st.integers(1, 8192))
-    def test_archive_download_verifies_and_writes_the_stream(self, payload, chunk_size):
+    def test_archive_download_writes_and_counts_the_stream(self, payload, chunk_size):
         destination = mock.Mock(spec=Path)
         output = NonClosingBytesIO()
         destination.open.return_value = output
-        narinfo = {
-            "FileSize": str(len(payload)),
-            "FileHash": "sha256:" + hashes.nix_base32(hashlib.sha256(payload).digest()),
-        }
         response = io.BytesIO(payload)
         original_read = response.read
         response.read = lambda size=-1: original_read(min(size, chunk_size))
 
         with mock.patch.object(cache, "request", return_value=response):
             self.assertEqual(
-                cache.download_archive("mock://archive", destination, narinfo),
-                len(payload),
+                cache.download_archive("mock://archive", destination), len(payload)
             )
         self.assertEqual(output.getvalue(), payload)
 
