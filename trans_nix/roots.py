@@ -100,8 +100,21 @@ def same_symlink(path: Path, target: Path) -> bool:
     )
 
 
+def validate_install_link(link: Path, target: Path, force: bool) -> None:
+    """Reject destination conflicts before materializing a translated root."""
+    if same_symlink(link, target) or not path_lexists(link):
+        return
+    if link.is_dir() and not link.is_symlink() and not any(link.iterdir()):
+        return
+    if not force:
+        raise DownloadError(
+            f"mise install path already exists: {link}; pass --force to replace it"
+        )
+
+
 def install_link(link: Path, target: Path, force: bool) -> None:
     link.parent.mkdir(parents=True, exist_ok=True)
+    validate_install_link(link, target, force)
     if same_symlink(link, target):
         return
 
@@ -111,10 +124,6 @@ def install_link(link: Path, target: Path, force: bool) -> None:
             link.rmdir()
         elif force:
             remove_path(link)
-        else:
-            raise DownloadError(
-                f"mise install path already exists: {link}; pass --force to replace it"
-            )
 
     temporary = link.parent / f".{link.name}.link-{os.getpid()}"
     remove_path(temporary)

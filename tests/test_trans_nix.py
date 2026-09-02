@@ -304,6 +304,40 @@ class InstallRootTests(unittest.TestCase):
             self.assertTrue(link.is_symlink())
             self.assertEqual(Path(os.readlink(link)), target)
 
+    def test_destination_conflict_is_rejected_before_materializing_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            destination = home / "mise" / "demo"
+            destination.parent.mkdir()
+            destination.write_text("user data")
+            args = mock.Mock(
+                package="hello",
+                short_storage_slug="h",
+                version="2.12.2",
+                platform="aarch64-linux",
+                nix_package_output=None,
+                jobs=4,
+                install_to_path=destination,
+                force=False,
+            )
+            with (
+                mock.patch.dict(os.environ, {"HOME": str(home)}),
+                mock.patch.object(
+                    commands,
+                    "resolve_package",
+                    return_value=("2.12.2", "1" * 32),
+                ),
+                mock.patch.object(commands, "validate_relocated_root_length"),
+                mock.patch.object(commands, "discover_closure") as discover,
+                mock.patch.object(commands, "materialize_closure") as materialize,
+                self.assertRaisesRegex(errors.DownloadError, "already exists"),
+            ):
+                commands.run_install(args)
+            discover.assert_not_called()
+            materialize.assert_not_called()
+            self.assertEqual(destination.read_text(), "user data")
+            self.assertFalse((home / ".tn").exists())
+
     def test_matching_root_is_reused_and_linked(self):
         root_basename = "1" * 32 + "-nodejs-24.14.0"
         with tempfile.TemporaryDirectory() as temporary:

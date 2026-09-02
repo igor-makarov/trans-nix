@@ -18,6 +18,7 @@ from .roots import (
     load_manifest,
     manifest_matches,
     relocated_root,
+    validate_install_link,
     validate_platform,
     validate_relocated_root_length,
     validate_segment,
@@ -62,6 +63,7 @@ def run_install(args: argparse.Namespace) -> int:
     version, digest = resolve_package(args.package, args.version, platform, output_name)
     root_path = relocated_root(short_storage_slug, version)
     validate_relocated_root_length(root_path)
+    validate_install_link(install_to_path, root_path, args.force)
     root_path.parent.mkdir(parents=True, exist_ok=True)
     output_label = output_name or "default"
     eprint(
