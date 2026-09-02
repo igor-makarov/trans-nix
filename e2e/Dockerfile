@@ -12,6 +12,11 @@ RUN mise install python@3.14 uv@latest \
         --python /opt/e2e-python/bin/python3 /opt/e2e-venv \
     && /opt/e2e-venv/bin/python --version
 
+COPY pyproject.toml uv.lock /opt/e2e-project/
+RUN UV_PROJECT_ENVIRONMENT=/opt/e2e-venv \
+    mise exec uv@latest -- uv sync \
+        --locked --project /opt/e2e-project --no-install-project
+
 # The cold image has an absolute Python harness, but no mise-managed Python.
 # This lets one test verify the plugin's declared Python dependency ordering.
 FROM debian:13-slim AS cold
