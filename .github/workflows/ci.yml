@@ -58,4 +58,4 @@ jobs:
         with:
           cache: true
       - run: mise run test:unit
-      - run: mise run test:linux
+      - run: mise run test:docker

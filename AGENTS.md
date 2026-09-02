@@ -15,7 +15,7 @@ Use these checks:
 mise run lint
 mise run test:unit
 mise run test:e2e    # native platform integration suite
-mise run test:linux  # same Linux Docker image used by CI
+mise run test:docker # same Linux Docker image used by CI
 mise run test:all    # native plus Docker verification
 ```
 

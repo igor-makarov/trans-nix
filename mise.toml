@@ -36,10 +36,10 @@ run = "uv run --locked python3 -m unittest discover -s tests -v"
 description = "Run each E2E test in a separate macOS Seatbelt sandbox"
 run = "python3 e2e/run.py native"
 
-[tasks."test:linux"]
+[tasks."test:docker"]
 description = "Run each E2E test in a separate ephemeral Linux container"
 run = "python3 e2e/run.py docker"
 
 [tasks."test:all"]
 description = "Run local native and Docker verification"
-depends = ["lint", "test:unit", "test:e2e", "test:linux"]
+depends = ["lint", "test:unit", "test:e2e", "test:docker"]
