@@ -45,6 +45,10 @@ OTHER_PLATFORM = {
     "aarch64-linux": "x86_64-linux",
     "x86_64-linux": "aarch64-linux",
 }
+UPSTREAM_INTEGRITY_ERRORS = (
+    "error: archive size mismatch:",
+    "error: archive hash mismatch",
+)
 
 
 @dataclass(frozen=True)
@@ -184,7 +188,7 @@ class Harness:
     ) -> subprocess.CompletedProcess[str]:
         env = self.base_env.copy()
         env["TMPDIR"] = str(self.home / "tmp")
-        return subprocess.run(
+        result = subprocess.run(
             [sys.executable, "-B", str(self.cli), *arguments],
             cwd=cwd or self.work,
             env=env,
@@ -192,6 +196,17 @@ class Harness:
             capture_output=True,
             check=False,
         )
+        if result.returncode and any(
+            marker in result.stderr for marker in UPSTREAM_INTEGRITY_ERRORS
+        ):
+            print(
+                "INFRASTRUCTURE PANIC: Nix cache metadata does not match its archive:\n"
+                + result.stderr,
+                file=sys.stderr,
+                flush=True,
+            )
+            os._exit(86)
+        return result
 
     def discover(self) -> list[VersionChoice]:
         self.reset()

@@ -36,7 +36,9 @@ def measure(label: str) -> Iterator[None]:
 
 def native() -> None:
     if platform.system() != "Darwin":
-        raise SystemExit("native E2E isolation requires macOS Seatbelt; use test:docker")
+        raise SystemExit(
+            "native E2E isolation requires macOS Seatbelt; use test:docker"
+        )
     sandbox_exec = shutil.which("sandbox-exec")
     mise = shutil.which("mise")
     if not sandbox_exec or not mise:
