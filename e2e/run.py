@@ -19,9 +19,28 @@ TESTS = sorted(E2E_DIR.glob("test_*.py"))
 COLD_TEST = "test_cold.py"
 
 
+class CommandFailure(Exception):
+    def __init__(self, returncode: int) -> None:
+        super().__init__(f"command exited with status {returncode}")
+        self.returncode = returncode
+
+
 def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
     print(f"+ {' '.join(command)}", flush=True)
-    subprocess.run(command, cwd=ROOT, env=env, check=True)
+    result = subprocess.run(command, cwd=ROOT, env=env, check=False)
+    if result.returncode:
+        raise CommandFailure(result.returncode)
+
+
+def report_failures(failures: list[tuple[str, int]]) -> None:
+    if not failures:
+        return
+    print("\nE2E FAILURE SUMMARY", file=sys.stderr, flush=True)
+    for test, returncode in failures:
+        kind = "infrastructure panic" if returncode == 86 else "test failure"
+        print(f"- {test}: {kind} (exit {returncode})", file=sys.stderr, flush=True)
+    exit_code = 86 if all(code == 86 for _, code in failures) else 1
+    raise SystemExit(exit_code)
 
 
 @contextmanager
@@ -65,69 +84,74 @@ def native() -> None:
         if not seeded_python.is_dir():
             raise SystemExit(f"mise Python seed is missing: {seeded_python}")
 
+    failures: list[tuple[str, int]] = []
     for test in TESTS:
-        with measure(f"test {test.name}"):
-            root = Path(tempfile.mkdtemp(prefix="", dir=sandbox_roots))
-            try:
-                (root / "tmp").mkdir()
-                (root / "bin").mkdir()
-                (root / "bin/git").symlink_to(git)
-                if test.name != COLD_TEST:
-                    install_parent = root / "mise" / "installs" / "python"
-                    install_parent.mkdir(parents=True)
+        try:
+            with measure(f"test {test.name}"):
+                root = Path(tempfile.mkdtemp(prefix="", dir=sandbox_roots))
+                try:
+                    (root / "tmp").mkdir()
+                    (root / "bin").mkdir()
+                    (root / "bin/git").symlink_to(git)
+                    if test.name != COLD_TEST:
+                        install_parent = root / "mise" / "installs" / "python"
+                        install_parent.mkdir(parents=True)
+                        run(
+                            [
+                                "/bin/cp",
+                                "-cR",
+                                str(seeded_python),
+                                str(install_parent / seeded_python.name),
+                            ]
+                        )
+                    sandbox_root = root.resolve()
+                    profile = root / "seatbelt.sb"
+                    profile.write_text(
+                        "\n".join(
+                            [
+                                "(version 1)",
+                                "(allow default)",
+                                "(deny file-write*)",
+                                f"(allow file-write* (subpath {json.dumps(str(sandbox_root))}))",
+                                '(allow file-write* (subpath "/dev"))',
+                                "",
+                            ]
+                        )
+                    )
+                    env = os.environ.copy()
+                    env.update(
+                        {
+                            "TRANS_NIX_TEST_ROOT": str(root),
+                            "TRANS_NIX_REPO": str(ROOT),
+                            "TRANS_NIX_MISE": mise,
+                            "TRANS_NIX_EXPECT_SEATBELT": "1",
+                            "TRANS_NIX_PYTHON_VERSION": (
+                                "3.14" if test.name == COLD_TEST else seeded_python.name
+                            ),
+                            "TRANS_NIX_BASE_PATH": (
+                                f"{root / 'bin'}:/usr/bin:/bin:/usr/sbin:/sbin"
+                            ),
+                            "PYTHONDONTWRITEBYTECODE": "1",
+                            "TMPDIR": str(root / "tmp"),
+                        }
+                    )
+                    print(f"\n=== {test.name} (Seatbelt root: {root}) ===", flush=True)
                     run(
                         [
-                            "/bin/cp",
-                            "-cR",
-                            str(seeded_python),
-                            str(install_parent / seeded_python.name),
-                        ]
+                            sandbox_exec,
+                            "-f",
+                            str(profile),
+                            sys.executable,
+                            "-B",
+                            str(test),
+                        ],
+                        env=env,
                     )
-                sandbox_root = root.resolve()
-                profile = root / "seatbelt.sb"
-                profile.write_text(
-                    "\n".join(
-                        [
-                            "(version 1)",
-                            "(allow default)",
-                            "(deny file-write*)",
-                            f"(allow file-write* (subpath {json.dumps(str(sandbox_root))}))",
-                            '(allow file-write* (subpath "/dev"))',
-                            "",
-                        ]
-                    )
-                )
-                env = os.environ.copy()
-                env.update(
-                    {
-                        "TRANS_NIX_TEST_ROOT": str(root),
-                        "TRANS_NIX_REPO": str(ROOT),
-                        "TRANS_NIX_MISE": mise,
-                        "TRANS_NIX_EXPECT_SEATBELT": "1",
-                        "TRANS_NIX_PYTHON_VERSION": (
-                            "3.14" if test.name == COLD_TEST else seeded_python.name
-                        ),
-                        "TRANS_NIX_BASE_PATH": (
-                            f"{root / 'bin'}:/usr/bin:/bin:/usr/sbin:/sbin"
-                        ),
-                        "PYTHONDONTWRITEBYTECODE": "1",
-                        "TMPDIR": str(root / "tmp"),
-                    }
-                )
-                print(f"\n=== {test.name} (Seatbelt root: {root}) ===", flush=True)
-                run(
-                    [
-                        sandbox_exec,
-                        "-f",
-                        str(profile),
-                        sys.executable,
-                        "-B",
-                        str(test),
-                    ],
-                    env=env,
-                )
-            finally:
-                shutil.rmtree(root, ignore_errors=True)
+                finally:
+                    shutil.rmtree(root, ignore_errors=True)
+        except CommandFailure as error:
+            failures.append((test.name, error.returncode))
+    report_failures(failures)
 
 
 def docker() -> None:
@@ -166,22 +190,27 @@ def docker() -> None:
                 str(ROOT),
             ]
         )
+    failures: list[tuple[str, int]] = []
     for test in TESTS:
-        with measure(f"test {test.name}"):
-            image = cold_image if test.name == COLD_TEST else warm_image
-            print(
-                f"\n=== {test.name} (ephemeral {image} container) ===",
-                flush=True,
-            )
-            run(
-                [
-                    docker_bin,
-                    "run",
-                    "--rm",
-                    image,
-                    f"/work/e2e/{test.name}",
-                ]
-            )
+        try:
+            with measure(f"test {test.name}"):
+                image = cold_image if test.name == COLD_TEST else warm_image
+                print(
+                    f"\n=== {test.name} (ephemeral {image} container) ===",
+                    flush=True,
+                )
+                run(
+                    [
+                        docker_bin,
+                        "run",
+                        "--rm",
+                        image,
+                        f"/work/e2e/{test.name}",
+                    ]
+                )
+        except CommandFailure as error:
+            failures.append((test.name, error.returncode))
+    report_failures(failures)
 
 
 def main() -> None:
