@@ -49,8 +49,8 @@ The test starts a localhost reverse proxy with two routes:
 
 A cache miss is fetched from the real HTTPS service and atomically stored by its
 complete upstream URL. Concurrent misses for one URL are serialized. Later
-examples receive the exact cached bytes. Production archive size and hash checks
-remain active.
+examples receive the exact cached bytes. Production decompressed NAR size and
+hash checks remain active.
 
 Package metadata is fetched before Hypothesis starts. This creates a stable input
 pool for the run. NAR info and archives are fetched lazily. An upstream failure is

@@ -46,8 +46,8 @@ OTHER_PLATFORM = {
     "x86_64-linux": "aarch64-linux",
 }
 UPSTREAM_INTEGRITY_ERRORS = (
-    "error: archive size mismatch:",
-    "error: archive hash mismatch",
+    "error: NAR size mismatch:",
+    "error: NAR hash mismatch",
 )
 
 
@@ -200,7 +200,7 @@ class Harness:
             marker in result.stderr for marker in UPSTREAM_INTEGRITY_ERRORS
         ):
             print(
-                "INFRASTRUCTURE PANIC: Nix cache metadata does not match its archive:\n"
+                "INFRASTRUCTURE PANIC: Nix cache metadata does not match its NAR:\n"
                 + result.stderr,
                 file=sys.stderr,
                 flush=True,
